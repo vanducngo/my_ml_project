@@ -1,0 +1,20 @@
+# --- Core Framework ---
+# Django>=4.2                 # Framework web chính
+# djangorestframework         # (Tùy chọn) Nếu sau này muốn dùng API chuyên nghiệp hơn JsonResponse
+# django-cors-headers         # (Tùy chọn) Để frontend (React/Vue) gọi được API
+
+# --- Data Processing ---
+pandas>=2.0.0               # Xử lý DataFrame, đọc CSV/Excel
+numpy>=1.24.0               # Tính toán ma trận
+openpyxl                    # Hỗ trợ Pandas đọc/ghi file Excel (.xlsx) nếu cần
+
+# --- Machine Learning & Math ---
+scikit-learn>=1.3.0         # Chứa KMeans, StandardScaler, LabelEncoder...
+xgboost>=2.0.0              # Model XGBClassifier
+scipy>=1.10.0               # Chứa hàm stats.boxcox
+joblib>=1.3.0               # Để lưu (dump) và tải (load) model .pkl
+kneed                       # Thuật toán Elbow (KneeLocator) dùng trong PDF
+
+# --- Visualization (Dùng cho notebook hoặc nếu muốn vẽ biểu đồ server-side) ---
+matplotlib                  # Vẽ biểu đồ cơ bản
+seaborn                     # Vẽ biểu đồ nâng cao (Heatmap, Distribution...)

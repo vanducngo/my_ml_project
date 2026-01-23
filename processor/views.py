@@ -1,6 +1,8 @@
+from processor.services import RFMEngine
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
+from django.http import JsonResponse
 import time
 
 # API 1: new_transaction (Nhận customer_id)
@@ -18,11 +20,10 @@ def new_transaction(request):
     # --- Code xử lý logic transaction ở đây ---
     print(f"Đang xử lý giao dịch cho khách hàng: {customer_id}")
     
-    return Response({
-        "message": "Giao dịch đã được ghi nhận",
-        "customer_id": customer_id,
-        "status": "success"
-    }, status=status.HTTP_201_CREATED)
+    engine = RFMEngine()
+    result = engine.predict(customer_id)
+
+    return JsonResponse(result)
 
 
 # API 2: retrain_all
@@ -32,11 +33,10 @@ def retrain_all(request):
     
     # --- Giả lập quá trình train ---
     # time.sleep(2) 
+    engine = RFMEngine()
+    result = engine.train()
     
-    return Response({
-        "message": "Đã hoàn thành Retrain All",
-        "accuracy": 0.98  # Ví dụ trả về độ chính xác giả
-    }, status=status.HTTP_200_OK)
+    return JsonResponse(result)
 
 
 # API 3: retrain_classifier
@@ -44,9 +44,7 @@ def retrain_all(request):
 def retrain_classifier(request):
     print("Chỉ train lại Classifier...")
     
-    # --- Logic train classifier ở đây ---
-
-    return Response({
-        "message": "Đã hoàn thành Retrain Classifier",
-        "model_version": "v2.5"
-    }, status=status.HTTP_200_OK)
+    engine = RFMEngine()
+    result = engine.train()
+    
+    return JsonResponse(result)
