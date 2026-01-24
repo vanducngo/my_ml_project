@@ -133,7 +133,7 @@ class RFMEngine:
         rfm_df = self._calculate_rfm(df)
 
         # rfm_df = self.remove_outliers_iqr(df)
-        rfm_df = self.remove_outliers_iqr(df, ['Recency', 'Frequency', 'Monetary'])
+        rfm_df = self.remove_outliers_iqr(rfm_df, ['Recency', 'Frequency', 'Monetary'])
 
         # Transform the data while keeping 'Customer ID'
         rfm_processed = pd.DataFrame()
