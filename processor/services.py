@@ -427,3 +427,104 @@ class RFMEngine:
             "output_file": output_path,
             "preview": rfm_df.head().to_dict(orient='index')
         }
+    
+    def predict_customer(self, customer_id, csv_filename='online_retail_II.csv'):
+        """
+        Dự đoán phân khúc cho MỘT khách hàng cụ thể dựa trên lịch sử giao dịch trong CSV gốc.
+        Args:
+            customer_id (str/int/float): ID của khách hàng cần dự đoán.
+        """
+        print(f"--- Bắt đầu dự đoán cho Customer ID: {customer_id} ---")
+
+        # 1. Kiểm tra Model & Config đã tồn tại chưa
+        if not os.path.exists(self.files['model']) or not os.path.exists(self.files['config']):
+            return {"status": "error", "message": "Model chưa được train. Hãy chạy /train/ trước."}
+
+        # 2. Đọc file CSV gốc (Lịch sử giao dịch)
+        csv_path = os.path.join(self.DATA_DIR, csv_filename)
+        if not os.path.exists(csv_path):
+            return {"status": "error", "message": f"File dữ liệu {csv_filename} không tồn tại."}
+        
+        # Đọc dữ liệu (có thể tối ưu bằng cách chỉ đọc các cột cần thiết)
+        df = pd.read_csv(csv_path)
+        
+        # 3. Tiền xử lý dữ liệu thô (Preprocessing)
+        # Bắt buộc phải làm bước này để loại bỏ đơn hủy, đơn lỗi trước khi tính toán
+        df['InvoiceDate'] = pd.to_datetime(df['InvoiceDate'])
+        df = df[df['Quantity'] > 0]
+        df = df[df['Price'] > 0]
+        df = df.dropna(subset=['Customer ID'])
+
+        # 4. Xác định ngày mốc (Global Latest Date)
+        # QUAN TRỌNG: Phải lấy ngày max của TOÀN BỘ dữ liệu, không phải của riêng khách hàng
+        global_latest_date = df['InvoiceDate'].max() + datetime.timedelta(days=1)
+
+        # 5. Lọc dữ liệu của Customer ID được yêu cầu
+        # Chuyển đổi Customer ID trong DataFrame và Input về cùng kiểu String để so sánh
+        df['Customer ID'] = df['Customer ID'].astype(float).astype(int).astype(str)
+        str_customer_id = str(int(float(customer_id))) # Chuyển input '12345.0' hoặc 12345 thành '12345'
+        
+        customer_df = df[df['Customer ID'] == str_customer_id].copy()
+
+        if customer_df.empty:
+            return {"status": "error", "message": f"Không tìm thấy giao dịch nào của Customer ID {customer_id}"}
+
+        # 6. Tính toán RFM cho khách hàng này
+        # Tính Recency
+        last_purchase_date = customer_df['InvoiceDate'].max()
+        recency = (global_latest_date - last_purchase_date).days
+        
+        # Tính Frequency
+        frequency = customer_df['Invoice'].nunique()
+        
+        # Tính Monetary
+        monetary = (customer_df['Quantity'] * customer_df['Price']).sum()
+
+        # Xử lý ràng buộc Box-Cox (Giá trị phải > 0)
+        recency = 1 if recency <= 0 else recency
+        frequency = 1 if frequency <= 0 else frequency # Hầu như không xảy ra nếu data không rỗng
+        monetary = 0.001 if monetary <= 0 else monetary # Tránh lỗi nếu tổng tiền = 0
+
+        # Tạo DataFrame RFM cho 1 dòng
+        rfm_data = pd.DataFrame([{
+            'Recency': recency, 
+            'Frequency': frequency, 
+            'Monetary': monetary
+        }])
+
+        print(f"RFM Raw Values: R={recency}, F={frequency}, M={monetary}")
+
+        # 7. Load Artifacts & Config
+        model = joblib.load(self.files['model'])
+        scaler = joblib.load(self.files['scaler'])
+        encoder = joblib.load(self.files['encoder'])
+        with open(self.files['config'], 'r') as f:
+            config = json.load(f)
+
+        # 8. Transformation (Box-Cox) & Scaling
+        # Áp dụng công thức y hệt lúc train
+        try:
+            rfm_process = rfm_data.copy()
+            rfm_process['Recency'] = stats.boxcox(rfm_process['Recency'], lmbda=config['lambda_recency'])
+            rfm_process['Frequency'] = stats.boxcox(rfm_process['Frequency'], lmbda=config['lambda_frequency'])
+            rfm_process['Monetary'] = np.cbrt(rfm_process['Monetary']) # Căn bậc 3
+
+            # Scale dữ liệu
+            X_new = scaler.transform(rfm_process[['Recency', 'Frequency', 'Monetary']])
+        except Exception as e:
+            return {"status": "error", "message": f"Lỗi tính toán toán học: {str(e)}"}
+
+        # 9. Predict
+        pred_encoded = model.predict(X_new)
+        pred_label = encoder.inverse_transform(pred_encoded)[0]
+
+        return {
+            "status": "success",
+            "customer_id": str_customer_id,
+            "rfm": {
+                "recency": int(recency),
+                "frequency": int(frequency),
+                "monetary": float(round(monetary, 2))
+            },
+            "segment": pred_label
+        }

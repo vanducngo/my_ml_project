@@ -21,7 +21,7 @@ def new_transaction(request):
     print(f"Đang xử lý giao dịch cho khách hàng: {customer_id}")
     
     engine = RFMEngine()
-    result = engine.predict(customer_id)
+    result = engine.predict_customer(customer_id)
 
     return JsonResponse(result)
 
