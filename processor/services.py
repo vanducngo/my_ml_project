@@ -41,6 +41,7 @@ class RFMEngine:
         targetDf = targetDf[targetDf['Customer ID'].notna()]    # Xoá những đơn hàng không có Customer ID
 
         print("Tiền xử lý dữ liệu - End")
+        return targetDf
 
     def _calculate_rfm(self, targetDf):
         """Hàm tính toán RFM từ dữ liệu giao dịch thô"""
