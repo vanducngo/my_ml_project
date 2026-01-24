@@ -142,8 +142,18 @@ class RFMEngine:
         rfm_processed['Customer ID'] = rfm_df['Customer ID']
 
         # Apply transformations to Recency, Frequency, and Monetary
-        rfm_processed['Recency'], lmbda_r = stats.boxcox(rfm_df['Recency'])[0]
-        rfm_processed['Frequency'], lmbda_f = stats.boxcox(rfm_df['Frequency'])[0]
+        # rfm_processed['Recency'], lmbda_r = stats.boxcox(rfm_df['Recency'])[0]
+        # rfm_processed['Frequency'], lmbda_f = stats.boxcox(rfm_df['Frequency'])[0]
+        # rfm_processed['Monetary'] = pd.Series(np.cbrt(rfm_df['Monetary'])).values
+        if (rfm_df['Recency'] <= 0).any():
+            rfm_df['Recency'] = rfm_df['Recency'].apply(lambda x: 1 if x <= 0 else x)
+            
+        rfm_processed['Recency'], lmbda_r = stats.boxcox(rfm_df['Recency']) # Bỏ [0]
+        
+        # Frequency
+        rfm_processed['Frequency'], lmbda_f = stats.boxcox(rfm_df['Frequency']) # Bỏ [0]
+        
+        # Monetary (Dùng căn bậc 3 nên giữ nguyên)
         rfm_processed['Monetary'] = pd.Series(np.cbrt(rfm_df['Monetary'])).values
 
         # 4. Chuẩn hóa (Scaling)
