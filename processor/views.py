@@ -23,6 +23,8 @@ def new_transaction(request):
     engine = RFMEngine()
     result = engine.predict_customer(customer_id)
 
+    print(f"new_transaction -> Result: {result}")
+
     return JsonResponse(result)
 
 
