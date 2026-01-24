@@ -18,3 +18,6 @@ kneed                       # Thuật toán Elbow (KneeLocator) dùng trong PDF
 # --- Visualization (Dùng cho notebook hoặc nếu muốn vẽ biểu đồ server-side) ---
 matplotlib                  # Vẽ biểu đồ cơ bản
 seaborn                     # Vẽ biểu đồ nâng cao (Heatmap, Distribution...)
+
+psycopg2-binary>=2.9.0      # Driver kết nối PostgreSQL
+sqlalchemy>=2.0.0           # Hỗ trợ pandas đọc SQL cực nhanh

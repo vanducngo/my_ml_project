@@ -13,6 +13,9 @@ from django.conf import settings
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
 
+from sqlalchemy import create_engine, text
+
+
 class RFMEngine:
     def __init__(self):
         # Đường dẫn tuyệt đối tới các thư mục
@@ -30,6 +33,51 @@ class RFMEngine:
             'encoder': os.path.join(self.ARTIFACT_DIR, 'encoder.pkl'),
             'config': os.path.join(self.ARTIFACT_DIR, 'config.json'),
         }
+
+        self.DB_CONNECTION_STR = "postgresql+psycopg2://odoo:89b39fdsfd8af8ds7a98fdsa19ec6c6@localhost:5432/DotB"
+
+    def _load_data_from_db(self):
+        """Hàm thay thế pd.read_csv: Lấy dữ liệu trực tiếp từ Odoo"""
+        print("--- Đang kết nối Database Odoo để lấy dữ liệu ---")
+        try:
+            engine = create_engine(self.DB_CONNECTION_STR)
+            
+            # Query mapping Odoo Tables -> RFM Format
+            # sale_order: Đơn hàng
+            # sale_order_line: Chi tiết sản phẩm trong đơn
+            # res_partner: Khách hàng
+            query = """
+                SELECT 
+                    so.name as "Invoice",
+                    pp.default_code as "StockCode",
+                    sol.name as "Description",
+                    sol.product_uom_qty as "Quantity",
+                    so.date_order as "InvoiceDate",
+                    sol.price_unit as "Price",
+                    rp.id as "Customer ID",
+                    rc.name as "Country"
+                FROM sale_order_line sol
+                JOIN sale_order so ON sol.order_id = so.id
+                LEFT JOIN res_partner rp ON so.partner_id = rp.id
+                LEFT JOIN product_product pp ON sol.product_id = pp.id
+                LEFT JOIN res_country rc ON rp.country_id = rc.id
+                WHERE so.state IN ('sale', 'done') 
+                AND sol.product_uom_qty > 0
+            """
+            
+            # Đọc SQL vào DataFrame
+            df = pd.read_sql(query, engine)
+            print(f"--- Đã tải {len(df)} dòng dữ liệu từ Database ---")
+            
+            # Xử lý nhanh Customer ID bị thiếu (nếu có)
+            df = df.dropna(subset=['Customer ID'])
+            
+            return df
+            
+        except Exception as e:
+            print(f"LỖI KẾT NỐI DB: {e}")
+            print("Gợi ý: Kiểm tra xem Docker có map port 5432 ra localhost không? (docker ps)")
+            raise e
 
     def _preprocessing(self, df):
         print("Tiền xử lý dữ liệu - Start")
@@ -120,12 +168,19 @@ class RFMEngine:
         """Quy trình huấn luyện Model từ đầu"""
         print("--- Bắt đầu quy trình Training ---")
         
-        # 1. Đọc CSV
-        csv_path = os.path.join(self.DATA_DIR, csv_filename)
-        if not os.path.exists(csv_path):
-            return {"error": f"File {csv_filename} không tồn tại trong thư mục data/"}
+        # # 1. Đọc CSV
+        # csv_path = os.path.join(self.DATA_DIR, csv_filename)
+        # if not os.path.exists(csv_path):
+        #     return {"error": f"File {csv_filename} không tồn tại trong thư mục data/"}
             
-        df = pd.read_csv(csv_path)
+        # df = pd.read_csv(csv_path)
+
+        # 1. Lấy dữ liệu từ DB thay vì CSV
+        try:
+            df = self._load_data_from_db()
+        except Exception:
+            return {"status": "error", "message": "Không thể kết nối Database. Xem log terminal."}
+
 
         df = self._preprocessing(df)
         
