@@ -2,7 +2,6 @@ import os
 import joblib
 import datetime
 import json
-
 import pandas as pd
 import numpy as np
 from scipy import stats
@@ -13,8 +12,8 @@ from django.conf import settings
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
 
+# Thư viện kết nối DB
 from sqlalchemy import create_engine, text
-
 
 class RFMEngine:
     def __init__(self):
@@ -30,22 +29,20 @@ class RFMEngine:
         self.files = {
             'model': os.path.join(self.ARTIFACT_DIR, 'xgboost_model.pkl'),
             'scaler': os.path.join(self.ARTIFACT_DIR, 'scaler.pkl'),
-            'encoder': os.path.join(self.ARTIFACT_DIR, 'encoder.pkl'),
+            # Không cần encoder vì train trực tiếp trên Cluster ID (số)
+            # 'encoder': os.path.join(self.ARTIFACT_DIR, 'encoder.pkl'), 
             'config': os.path.join(self.ARTIFACT_DIR, 'config.json'),
         }
 
+        # Cấu hình DB Odoo (Docker container name hoặc localhost)
         self.DB_CONNECTION_STR = "postgresql+psycopg2://odoo:89b39fdsfd8af8ds7a98fdsa19ec6c6@localhost:5432/DotB"
 
     def _load_data_from_db(self):
-        """Hàm thay thế pd.read_csv: Lấy dữ liệu trực tiếp từ Odoo"""
+        """Hàm lấy dữ liệu trực tiếp từ PostgreSQL của Odoo"""
         print("--- Đang kết nối Database Odoo để lấy dữ liệu ---")
         try:
             engine = create_engine(self.DB_CONNECTION_STR)
             
-            # Query mapping Odoo Tables -> RFM Format
-            # sale_order: Đơn hàng
-            # sale_order_line: Chi tiết sản phẩm trong đơn
-            # res_partner: Khách hàng
             query = """
                 SELECT 
                     so.name as "Invoice",
@@ -65,56 +62,31 @@ class RFMEngine:
                 AND sol.product_uom_qty > 0
             """
             
-            # Đọc SQL vào DataFrame
             df = pd.read_sql(query, engine)
             print(f"--- Đã tải {len(df)} dòng dữ liệu từ Database ---")
             
-            # Xử lý nhanh Customer ID bị thiếu (nếu có)
+            # Xử lý Customer ID bị thiếu
             df = df.dropna(subset=['Customer ID'])
-            
             return df
             
         except Exception as e:
             print(f"LỖI KẾT NỐI DB: {e}")
-            print("Gợi ý: Kiểm tra xem Docker có map port 5432 ra localhost không? (docker ps)")
             raise e
 
     def _preprocessing(self, df):
         print("Tiền xử lý dữ liệu - Start")
         df['InvoiceDate'] = pd.to_datetime(df['InvoiceDate'])
 
-        targetDf = df.loc[~df.duplicated()]             # Xóa duplicated data
-        targetDf = targetDf[targetDf['Quantity'] > 0]   # Xoá hết những đơn mà có số lượng mua item nhỏ hơn hoạc bằng không
-        targetDf = targetDf[targetDf['Price'] > 0]      # Xoá hết những đơn mà có số giá item nhỏ hơn hoạc bằng không
-        targetDf = targetDf[targetDf['Customer ID'].notna()]    # Xoá những đơn hàng không có Customer ID
+        targetDf = df.loc[~df.duplicated()]             
+        targetDf = targetDf[targetDf['Quantity'] > 0]   
+        targetDf = targetDf[targetDf['Price'] > 0]      
+        targetDf = targetDf[targetDf['Customer ID'].notna()]    
 
         print("Tiền xử lý dữ liệu - End")
         return targetDf
 
     def _calculate_rfm(self, targetDf):
         """Hàm tính toán RFM từ dữ liệu giao dịch thô"""
-        
-        # # Tạo cột TotalPrice
-        # df['TotalPrice'] = df['Quantity'] * df['Price']
-        
-        # # Chọn ngày mốc (ngày cuối cùng trong data + 1)
-        # latest_date = df['InvoiceDate'].max() + pd.Timedelta(days=1)
-        
-        # # GroupBy tính RFM
-        # rfm = df.groupby('Customer ID').agg({
-        #     'InvoiceDate': lambda x: (latest_date - x.max()).days,
-        #     'Invoice': 'nunique',
-        #     'TotalPrice': 'sum'
-        # }).rename(columns={
-        #     'InvoiceDate': 'Recency',
-        #     'Invoice': 'Frequency',
-        #     'TotalPrice': 'Monetary'
-        # })
-        
-        # # Xử lý dữ liệu âm hoặc bằng 0 (Bắt buộc cho Box-Cox)
-        # rfm = rfm[rfm['Monetary'] > 0]
-        # rfm['Recency'] = rfm['Recency'].apply(lambda x: 1 if x <= 0 else x)
-        
         latest_date = targetDf['InvoiceDate'].max() + datetime.timedelta(days=1)
 
         recency_df = targetDf.groupby('Customer ID').agg({
@@ -136,395 +108,245 @@ class RFMEngine:
         return rfm_df
     
     def remove_outliers_iqr(self, df, columns):
-        # Lưu số lượng dòng ban đầu
-        initial_count = df.shape[0]
+        # Trả về dataframe mới để tránh warning SettingWithCopy
+        df_clean = df.copy()
+        initial_count = df_clean.shape[0]
 
         for col in columns:
-            # Tính toán Q1 (quartile 25) và Q3 (quartile 75)
-            Q1 = df[col].quantile(0.25)
-            Q3 = df[col].quantile(0.75)
-
-            # Tính toán IQR (khoảng giữa Q1 và Q3)
+            Q1 = df_clean[col].quantile(0.25)
+            Q3 = df_clean[col].quantile(0.75)
             IQR = Q3 - Q1
-
-            # Xác định giá trị ngoại lai (dưới Q1 - 1.5*IQR hoặc trên Q3 + 1.5*IQR)
             lower_bound = Q1 - 1.5 * IQR
             upper_bound = Q3 + 1.5 * IQR
+            
+            df_clean = df_clean[(df_clean[col] >= lower_bound) & (df_clean[col] <= upper_bound)]
 
-            # Loại bỏ các dòng có giá trị ngoại lai
-            df = df[(df[col] >= lower_bound) & (df[col] <= upper_bound)]
+        print(f"Số điểm ngoại lai đã bị loại bỏ: {initial_count - df_clean.shape[0]}")
+        return df_clean
 
-        # Lưu số lượng dòng sau khi loại bỏ
-        final_count = df.shape[0]
-
-        # Tính toán số điểm ngoại lai đã bị loại bỏ
-        outliers_removed = initial_count - final_count
-
-        print(f"Số điểm ngoại lai đã bị loại bỏ: {outliers_removed}")
-
-        return df
-
-    def train(self, csv_filename='online_retail_II.csv'):
-        """Quy trình huấn luyện Model từ đầu"""
+    def train(self, csv_filename='online_retail_II.csv', use_db=False):
+        """
+        Quy trình huấn luyện Model từ đầu.
+        Có thể chọn nguồn dữ liệu từ CSV hoặc Database.
+        """
         print("--- Bắt đầu quy trình Training ---")
         
-        # 1. Đọc CSV
-        csv_path = os.path.join(self.DATA_DIR, csv_filename)
-        if not os.path.exists(csv_path):
-            return {"error": f"File {csv_filename} không tồn tại trong thư mục data/"}
-            
-        df = pd.read_csv(csv_path)
+        # 1. Load Dữ Liệu (DB hoặc CSV)
+        if use_db:
+            try:
+                df = self._load_data_from_db()
+            except Exception:
+                return {"status": "error", "message": "Lỗi DB. Vui lòng kiểm tra log."}
+        else:
+            csv_path = os.path.join(self.DATA_DIR, csv_filename)
+            if not os.path.exists(csv_path):
+                return {"error": f"File {csv_filename} không tồn tại."}
+            df = pd.read_csv(csv_path)
 
-        # # 1. Lấy dữ liệu từ DB thay vì CSV
-        # try:
-        #     df = self._load_data_from_db()
-        # except Exception:
-        #     return {"status": "error", "message": "Không thể kết nối Database. Xem log terminal."}
-
-
+        # 2. Preprocessing & RFM
         df = self._preprocessing(df)
-        
-        # 2. Tính RFM
         rfm_df = self._calculate_rfm(df)
 
-        # rfm_df = self.remove_outliers_iqr(df)
+        # 3. Remove Outliers
         rfm_df = self.remove_outliers_iqr(rfm_df, ['Recency', 'Frequency', 'Monetary'])
 
-        # Transform the data while keeping 'Customer ID'
+        # 4. Data Transformation (Box-Cox & Log)
         rfm_processed = pd.DataFrame()
-
-        # Copy 'Customer ID' to the new dataframe
         rfm_processed['Customer ID'] = rfm_df['Customer ID']
 
-        # Apply transformations to Recency, Frequency, and Monetary
-        # rfm_processed['Recency'], lmbda_r = stats.boxcox(rfm_df['Recency'])[0]
-        # rfm_processed['Frequency'], lmbda_f = stats.boxcox(rfm_df['Frequency'])[0]
-        # rfm_processed['Monetary'] = pd.Series(np.cbrt(rfm_df['Monetary'])).values
+        # Fix lỗi Box-Cox với số <= 0
         if (rfm_df['Recency'] <= 0).any():
             rfm_df['Recency'] = rfm_df['Recency'].apply(lambda x: 1 if x <= 0 else x)
             
-        rfm_processed['Recency'], lmbda_r = stats.boxcox(rfm_df['Recency']) # Bỏ [0]
-        
-        # Frequency
-        rfm_processed['Frequency'], lmbda_f = stats.boxcox(rfm_df['Frequency']) # Bỏ [0]
-        
-        # Monetary (Dùng căn bậc 3 nên giữ nguyên)
-        rfm_processed['Monetary'] = pd.Series(np.cbrt(rfm_df['Monetary'])).values
+        if (rfm_df['Frequency'] <= 0).any():
+            rfm_df['Frequency'] = rfm_df['Frequency'].apply(lambda x: 1 if x <= 0 else x)
 
-        # 4. Chuẩn hóa (Scaling)
+        # Lưu lại lambda để dùng cho predict
+        rfm_processed['Recency'], lmbda_r = stats.boxcox(rfm_df['Recency'])
+        rfm_processed['Frequency'], lmbda_f = stats.boxcox(rfm_df['Frequency'])
+        rfm_processed['Monetary'] = np.cbrt(rfm_df['Monetary']).values
+
+        # 5. Scaling
         scaler = StandardScaler()
-        # Chuẩn hóa các trường cần thiết
-        df_rfm_scaled_values = scaler.fit_transform(rfm_processed[['Recency', 'Frequency', 'Monetary']])
-
-        # Chuyển dữ liệu chuẩn hóa thành DataFrame, giữ nguyên tên cột
-        df_rfm_scaled = pd.DataFrame(df_rfm_scaled_values, columns=['Recency', 'Frequency', 'Monetary'])
-
-        # Gắn lại cột Customer ID
-        df_rfm_scaled['Customer ID'] = rfm_processed['Customer ID'].values
-
-        # Đưa cột Customer ID lên đầu
-        df_rfm_scaled = df_rfm_scaled[['Customer ID', 'Recency', 'Frequency', 'Monetary']]
+        rfm_scaled_vals = scaler.fit_transform(rfm_processed[['Recency', 'Frequency', 'Monetary']])
+        df_rfm_scaled = pd.DataFrame(rfm_scaled_vals, columns=['Recency', 'Frequency', 'Monetary'])
         
-        # 5. Phân cụm (K-Means) để tạo nhãn (Labeling)
-        # Giả định K=5 như bài toán đã chốt
+        # 6. K-Means Clustering
         optimal_k = 5
-        # Giữ lại DataFrame gốc chứa Customer ID
-        df_rfm_scaled_df = df_rfm_scaled.copy()
-
-        # Tạo bản sao chỉ chứa các cột cần thiết cho phân cụm
-        df_for_clustering = df_rfm_scaled[['Recency', 'Frequency', 'Monetary']]
-
-        # Thực hiện phân cụm
-        kmeans = KMeans(n_clusters=optimal_k, random_state=42)
-        kmeans.fit(df_for_clustering)
-
-        # Thêm nhãn Cluster vào DataFrame gốc
-        df_rfm_scaled_df['Cluster'] = kmeans.labels_
-
-        # Merge hai DataFrame dựa trên Customer ID
-        rfm_df_new = pd.merge(rfm_df[['Customer ID', 'Recency', 'Frequency', 'Monetary']],
-                            df_rfm_scaled_df[['Customer ID', 'Cluster']],
-                            on='Customer ID',
-                            how='left')
+        kmeans = KMeans(n_clusters=optimal_k, random_state=42, n_init=10)
+        clusters = kmeans.fit_predict(df_rfm_scaled[['Recency', 'Frequency', 'Monetary']])
         
-        cluster_summary = rfm_df_new.groupby('Cluster').agg(
-            Recency_mean=('Recency', 'mean'),
-            Frequency_mean=('Frequency', 'mean'),
-            Monetary_mean=('Monetary', 'mean'),
-            Customer_count=('Customer ID', 'count')
-        ).reset_index()
+        rfm_full = rfm_df.copy()
+        rfm_full['Cluster'] = clusters # Cluster ID: 0, 1, 2, 3, 4 (Ngẫu nhiên)
 
-
-        # 2. Đổi tên các cột để khớp với bảng trong bài báo
-        cluster_summary.rename(columns={
-            'Cluster': 'Cluster ID',
-            'Recency_mean': 'R (Thấp)',
-            'Frequency_mean': 'F (Cao)',
-            'Monetary_mean': 'M (Cao)',
-            'Customer_count': 'Số lượng KH'
-        }, inplace=True)
-
-        # 3. Gán nhãn nghiệp vụ cho từng cụm dựa trên phân tích
-        # (Bạn có thể điều chỉnh các nhãn này cho phù hợp với kết quả thực tế của mình)
-        segment_labels_map = {
-            0: 'Khách hàng VIP',
-            1: 'Khách hàng Nguy cơ rời bỏ', # Dựa trên R cao, F/M thấp
-            2: 'Khách hàng Trung thành',
-            3: 'Khách hàng Tiềm năng',
-            4: 'Khách hàng Mới'
-        }
-        cluster_summary['Nhãn đề xuất'] = cluster_summary['Cluster ID'].map(segment_labels_map)
-
-
-        # 4. Sắp xếp lại các cột theo đúng thứ tự như trong bài báo
-        final_table = cluster_summary[[
-            'Cluster ID',
-            'R (Thấp)',
-            'F (Cao)',
-            'M (Cao)',
-            'Số lượng KH',
-            'Nhãn đề xuất'
-        ]].set_index('Cluster ID')
+        # ==========================================================
+        # 7. AUTO-MAPPING LOGIC (Tự động gán nhãn dựa trên Data)
+        # ==========================================================
+        print("--- Bắt đầu gán nhãn tự động (Auto-Mapping) ---")
         
+        # Tính trung bình R, F, M cho từng cụm
+        summary = rfm_full.groupby('Cluster').agg({
+            'Recency': 'mean', 
+            'Frequency': 'mean', 
+            'Monetary': 'mean'
+        })
         
-        rfm_df_final = rfm_df_new
-        print("--- Bắt đầu gán nhãn nghiệp vụ cho các phân khúc ---")
+        available_clusters = list(summary.index)
+        label_map = {}
 
-        # Tạo từ điển ánh xạ từ số Cluster sang Tên Phân khúc
-        # Dựa trên phân tích đã thống nhất ở trên.
-        label_map = {
-            0: 'Khách hàng VIP',
-            4: 'Khách hàng Mới',
-            2: 'Khách hàng Trung thành',
-            1: 'Nguy cơ rời bỏ',
-            3: 'Khách hàng tiềm năng'
-        }
+        # Rule 1: Tiền nhiều nhất -> VIP
+        vip_id = summary.loc[available_clusters]['Monetary'].idxmax()
+        label_map[int(vip_id)] = 'Khách hàng VIP'
+        available_clusters.remove(vip_id)
 
-        # Sử dụng hàm .map() để tạo cột 'Segment' mới
-        rfm_df_final['Segment'] = rfm_df_final['Cluster'].map(label_map)
+        # Rule 2: Recency cao nhất (lâu không mua) -> Rời bỏ
+        lost_id = summary.loc[available_clusters]['Recency'].idxmax()
+        label_map[int(lost_id)] = 'Nguy cơ rời bỏ'
+        available_clusters.remove(lost_id)
 
-        print("\n--- Gán nhãn hoàn tất! ---")
+        # Rule 3: Recency thấp nhất trong đám còn lại (mới mua) -> Trung thành
+        loyal_id = summary.loc[available_clusters]['Recency'].idxmin()
+        label_map[int(loyal_id)] = 'Khách hàng Trung thành'
+        available_clusters.remove(loyal_id)
 
+        # Rule 4: Tiền ít nhất trong đám còn lại -> Mới
+        new_id = summary.loc[available_clusters]['Monetary'].idxmin()
+        label_map[int(new_id)] = 'Khách hàng Mới'
+        available_clusters.remove(new_id)
 
-        # 7. Huấn luyện XGBoost (Supervised Learning)
-        # Mục đích: Để sau này predict nhanh hơn, không cần chạy lại K-Means
-        print("--- Bắt đầu chuẩn bị, mã hóa và chia dữ liệu ---")
+        # Rule 5: Còn lại -> Tiềm năng
+        potential_id = available_clusters[0]
+        label_map[int(potential_id)] = 'Khách hàng Tiềm năng'
 
-        # 1. Xác định Features (X)
-        X = rfm_df_final[['Recency', 'Frequency', 'Monetary']]
+        print("Mapping Logic được tạo ra:", label_map)
+        
+        # Áp dụng mapping vào DataFrame để visual (nếu cần)
+        rfm_full['Segment'] = rfm_full['Cluster'].map(label_map)
 
-        # 2. Xác định và Mã hóa Target (y)
-        y_original = rfm_df_final['Cluster']
+        # ==========================================================
+        # 8. Train XGBoost (Train trên Cluster ID)
+        # ==========================================================
+        print("--- Huấn luyện XGBoost trên Cluster IDs ---")
+        
+        X = df_rfm_scaled[['Recency', 'Frequency', 'Monetary']]
+        y = rfm_full['Cluster'] # Train target là số (0,1,2,3,4)
 
-        # Khởi tạo và fit LabelEncoder để học các nhãn chuỗi
-        le = LabelEncoder()
-        y_encoded = le.fit_transform(y_original)
-
-        # In ra để xem ánh xạ đã tạo
-        print("Ánh xạ từ nhãn chuỗi sang số:")
-        for i, class_name in enumerate(le.classes_):
-            print(f"'{class_name}' -> {i}")
-
-        # 3. Chia dữ liệu đã được mã hóa
-        # Sử dụng y_encoded để chia
-        X_train, X_test, y_train_encoded, y_test_encoded = train_test_split(
-            X, y_encoded, test_size=0.2, random_state=42, stratify=y_encoded
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42, stratify=y
         )
 
-        print("\n--- Chia dữ liệu hoàn tất! ---")
-        print(f"Kích thước tập huấn luyện (X_train): {X_train.shape}")
-        print(f"Kích thước tập kiểm tra (X_test):   {X_test.shape}")
+        model = xgb.XGBClassifier(use_label_encoder=False, eval_metric='mlogloss', random_state=42)
+        model.fit(X_train, y_train)
 
-        le = LabelEncoder()
-        y_train_encoded = le.fit_transform(y_train_encoded)
-        y_test_encoded = le.transform(y_test_encoded)
-        
-        model = xgb.XGBClassifier(random_state=42, use_label_encoder=False, eval_metric='mlogloss')
+        # Evaluate
+        y_pred = model.predict(X_test)
+        print(classification_report(y_test, y_pred))
 
-        # Huấn luyện mô hình
-        model.fit(X_train, y_train_encoded)
-
-        # Dự đoán trên tập test
-        y_pred_encoded = model.predict(X_test)
-
-        # Chuyển đổi ngược nhãn để báo cáo
-        y_pred_original = le.inverse_transform(y_pred_encoded)
-        y_test_original = le.inverse_transform(y_test_encoded)
-
-        # In báo cáo đánh giá
-        print(f"Báo cáo phân loại cho mô hình XGBClassifier:")
-        print(classification_report(y_test_original, y_pred_original))
-
-        # 8. LƯU ARTIFACTS (Quan trọng nhất)
+        # ==========================================================
+        # 9. Lưu Artifacts & Config
+        # ==========================================================
         joblib.dump(model, self.files['model'])
         joblib.dump(scaler, self.files['scaler'])
-        joblib.dump(le, self.files['encoder'])
+        # Không cần lưu encoder nữa vì ta train bằng số int trực tiếp
         
         config = {
             'lambda_recency': lmbda_r,
-            'lambda_frequency': lmbda_f
+            'lambda_frequency': lmbda_f,
+            'label_map': label_map # Lưu mapping để dùng khi predict
         }
+        
         with open(self.files['config'], 'w') as f:
             json.dump(config, f)
 
         return {
             "status": "success", 
-            "message": "Training completed & Model saved.",
+            "message": "Training hoàn tất. Mapping logic đã được cập nhật.",
+            "mapping": label_map
         }
 
-    def predict(self, csv_filename='new_transactions.csv'):
-        """Quy trình dự đoán cho dữ liệu mới"""
-        print("--- Bắt đầu quy trình Prediction ---")
-        
-        # 1. Kiểm tra file Model
-        if not os.path.exists(self.files['model']):
-            return {"error": "Model chưa được train. Hãy chạy /train/ trước."}
-
-        # 2. Đọc dữ liệu mới
-        csv_path = os.path.join(self.DATA_DIR, csv_filename)
-        if not os.path.exists(csv_path):
-            return {"error": f"File {csv_filename} không tồn tại."}
-            
-        df_new = pd.read_csv(csv_path)
-        
-        # 3. Load Artifacts
-        model = joblib.load(self.files['model'])
-        scaler = joblib.load(self.files['scaler'])
-        encoder = joblib.load(self.files['encoder'])
-        with open(self.files['config'], 'r') as f:
-            config = json.load(f)
-
-        # 4. Tính RFM cho data mới
-        rfm_df = self._calculate_rfm(df_new)
-        if rfm_df.empty:
-            return {"error": "Không đủ dữ liệu để tính RFM"}
-            
-        # 5. Áp dụng Transformation (Giống hệt lúc Train)
-        # Quan trọng: Dùng tham số lambda từ config, KHÔNG tính lại lambda mới
-        rfm_process = rfm_df.copy()
-        
-        rfm_process['Recency'] = stats.boxcox(rfm_process['Recency'], lmbda=config['lambda_recency'])
-        rfm_process['Frequency'] = stats.boxcox(rfm_process['Frequency'], lmbda=config['lambda_frequency'])
-        rfm_process['Monetary'] = np.cbrt(rfm_process['Monetary'])
-
-        # 6. Áp dụng Scaling
-        X_new = scaler.transform(rfm_process[['Recency', 'Frequency', 'Monetary']])
-
-        # 7. Dự đoán
-        preds_encoded = model.predict(X_new)
-        preds_label = encoder.inverse_transform(preds_encoded)
-
-        # 8. Tổng hợp kết quả
-        rfm_df['Segment'] = preds_label
-        
-        # Lưu kết quả ra file CSV để người dùng xem
-        output_path = os.path.join(self.DATA_DIR, 'prediction_results.csv')
-        rfm_df.to_csv(output_path)
-
-        # Trả về JSON 5 dòng đầu để preview
-        return {
-            "status": "success",
-            "output_file": output_path,
-            "preview": rfm_df.head().to_dict(orient='index')
-        }
-    
     def predict_customer(self, customer_id, csv_filename='online_retail_II.csv'):
         """
-        Dự đoán phân khúc cho MỘT khách hàng cụ thể dựa trên lịch sử giao dịch trong CSV gốc.
-        Args:
-            customer_id (str/int/float): ID của khách hàng cần dự đoán.
+        Dự đoán phân khúc cho MỘT khách hàng cụ thể.
+        Trả về cả Cluster ID (Số) và Segment Name (Chữ).
         """
         print(f"--- Bắt đầu dự đoán cho Customer ID: {customer_id} ---")
 
-        # 1. Kiểm tra Model & Config đã tồn tại chưa
-        if not os.path.exists(self.files['model']) or not os.path.exists(self.files['config']):
+        # 1. Kiểm tra Model & Config
+        if not os.path.exists(self.files['model']):
             return {"status": "error", "message": "Model chưa được train. Hãy chạy /train/ trước."}
 
-        # 2. Đọc file CSV gốc (Lịch sử giao dịch)
+        # 2. Đọc file CSV gốc (Lấy lịch sử giao dịch)
         csv_path = os.path.join(self.DATA_DIR, csv_filename)
         if not os.path.exists(csv_path):
-            return {"status": "error", "message": f"File dữ liệu {csv_filename} không tồn tại."}
+            return {"status": "error", "message": f"File {csv_filename} không tồn tại."}
         
-        # Đọc dữ liệu (có thể tối ưu bằng cách chỉ đọc các cột cần thiết)
         df = pd.read_csv(csv_path)
         
-        # 3. Tiền xử lý dữ liệu thô (Preprocessing)
-        # Bắt buộc phải làm bước này để loại bỏ đơn hủy, đơn lỗi trước khi tính toán
+        # 3. Preprocessing nhanh
         df['InvoiceDate'] = pd.to_datetime(df['InvoiceDate'])
         df = df[df['Quantity'] > 0]
         df = df[df['Price'] > 0]
         df = df.dropna(subset=['Customer ID'])
 
-        # 4. Xác định ngày mốc (Global Latest Date)
-        # QUAN TRỌNG: Phải lấy ngày max của TOÀN BỘ dữ liệu, không phải của riêng khách hàng
+        # 4. Xác định ngày mốc toàn cục
         global_latest_date = df['InvoiceDate'].max() + datetime.timedelta(days=1)
 
-        # 5. Lọc dữ liệu của Customer ID được yêu cầu
-        # Chuyển đổi Customer ID trong DataFrame và Input về cùng kiểu String để so sánh
+        # 5. Lọc dữ liệu Customer
+        str_customer_id = str(int(float(customer_id))) # Chuẩn hóa ID
         df['Customer ID'] = df['Customer ID'].astype(float).astype(int).astype(str)
-        str_customer_id = str(int(float(customer_id))) # Chuyển input '12345.0' hoặc 12345 thành '12345'
         
-        customer_df = df[df['Customer ID'] == str_customer_id].copy()
+        customer_df = df[df['Customer ID'] == str_customer_id]
 
         if customer_df.empty:
-            return {"status": "error", "message": f"Không tìm thấy giao dịch nào của Customer ID {customer_id}"}
+            return {"status": "error", "message": f"Không tìm thấy Customer ID {customer_id}"}
 
-        # 6. Tính toán RFM cho khách hàng này
-        # Tính Recency
-        last_purchase_date = customer_df['InvoiceDate'].max()
-        recency = (global_latest_date - last_purchase_date).days
-        
-        # Tính Frequency
+        # 6. Tính RFM
+        recency = (global_latest_date - customer_df['InvoiceDate'].max()).days
         frequency = customer_df['Invoice'].nunique()
-        
-        # Tính Monetary
         monetary = (customer_df['Quantity'] * customer_df['Price']).sum()
 
-        # Xử lý ràng buộc Box-Cox (Giá trị phải > 0)
+        # Xử lý an toàn cho Box-Cox
         recency = 1 if recency <= 0 else recency
-        frequency = 1 if frequency <= 0 else frequency # Hầu như không xảy ra nếu data không rỗng
-        monetary = 0.001 if monetary <= 0 else monetary # Tránh lỗi nếu tổng tiền = 0
+        frequency = 1 if frequency <= 0 else frequency
+        monetary = 0.001 if monetary <= 0 else monetary
 
-        # Tạo DataFrame RFM cho 1 dòng
-        rfm_data = pd.DataFrame([{
-            'Recency': recency, 
-            'Frequency': frequency, 
-            'Monetary': monetary
-        }])
-
-        print(f"RFM Raw Values: R={recency}, F={frequency}, M={monetary}")
-
-        # 7. Load Artifacts & Config
+        # 7. Load Model & Config
         model = joblib.load(self.files['model'])
         scaler = joblib.load(self.files['scaler'])
-        encoder = joblib.load(self.files['encoder'])
         with open(self.files['config'], 'r') as f:
             config = json.load(f)
 
-        # 8. Transformation (Box-Cox) & Scaling
-        # Áp dụng công thức y hệt lúc train
+        # Load Mapping từ config (Convert key từ string sang int)
+        label_map = {int(k): v for k, v in config['label_map'].items()}
+
+        # 8. Transform & Scale
         try:
-            rfm_process = rfm_data.copy()
-            rfm_process['Recency'] = stats.boxcox(rfm_process['Recency'], lmbda=config['lambda_recency'])
-            rfm_process['Frequency'] = stats.boxcox(rfm_process['Frequency'], lmbda=config['lambda_frequency'])
-            rfm_process['Monetary'] = np.cbrt(rfm_process['Monetary']) # Căn bậc 3
-
-            # Scale dữ liệu
-            X_new = scaler.transform(rfm_process[['Recency', 'Frequency', 'Monetary']])
+            r_trans = stats.boxcox([recency], lmbda=config['lambda_recency'])
+            f_trans = stats.boxcox([frequency], lmbda=config['lambda_frequency'])
+            m_trans = np.cbrt([monetary])
+            
+            # Tạo array 2D cho scaler
+            rfm_processed = np.array([[r_trans[0], f_trans[0], m_trans[0]]])
+            X_new = scaler.transform(rfm_processed)
+            
         except Exception as e:
-            return {"status": "error", "message": f"Lỗi tính toán toán học: {str(e)}"}
+            return {"status": "error", "message": f"Lỗi tính toán: {str(e)}"}
 
-        # 9. Predict
-        pred_encoded = model.predict(X_new)
-        pred_label = encoder.inverse_transform(pred_encoded)[0]
+        # 9. Predict & Map Result
+        pred_cluster_id = int(model.predict(X_new)[0]) # Ra số (ví dụ: 4)
+        segment_name = label_map.get(pred_cluster_id, "Không xác định")
 
+        # 10. Trả về kết quả (đã ép kiểu native python để tránh lỗi JSON)
         return {
             "status": "success",
             "customer_id": str_customer_id,
-            "rfm": {
+            "rfm_stats": {
                 "recency": int(recency),
                 "frequency": int(frequency),
                 "monetary": float(round(monetary, 2))
             },
-            "segment": pred_label
+            "prediction": {
+                "cluster_id": pred_cluster_id,
+                "segment": segment_name
+            }
         }
