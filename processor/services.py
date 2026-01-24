@@ -168,18 +168,18 @@ class RFMEngine:
         """Quy trình huấn luyện Model từ đầu"""
         print("--- Bắt đầu quy trình Training ---")
         
-        # # 1. Đọc CSV
-        # csv_path = os.path.join(self.DATA_DIR, csv_filename)
-        # if not os.path.exists(csv_path):
-        #     return {"error": f"File {csv_filename} không tồn tại trong thư mục data/"}
+        # 1. Đọc CSV
+        csv_path = os.path.join(self.DATA_DIR, csv_filename)
+        if not os.path.exists(csv_path):
+            return {"error": f"File {csv_filename} không tồn tại trong thư mục data/"}
             
-        # df = pd.read_csv(csv_path)
+        df = pd.read_csv(csv_path)
 
-        # 1. Lấy dữ liệu từ DB thay vì CSV
-        try:
-            df = self._load_data_from_db()
-        except Exception:
-            return {"status": "error", "message": "Không thể kết nối Database. Xem log terminal."}
+        # # 1. Lấy dữ liệu từ DB thay vì CSV
+        # try:
+        #     df = self._load_data_from_db()
+        # except Exception:
+        #     return {"status": "error", "message": "Không thể kết nối Database. Xem log terminal."}
 
 
         df = self._preprocessing(df)
