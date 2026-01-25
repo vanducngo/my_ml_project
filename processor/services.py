@@ -350,3 +350,59 @@ class RFMEngine:
                 "segment": segment_name
             }
         }
+    
+    def predict(self, csv_filename='online_retail_II.csv'):
+        """Quy trình dự đoán cho dữ liệu mới"""
+        print("--- Bắt đầu quy trình Prediction ---")
+        
+        # 1. Kiểm tra file Model
+        if not os.path.exists(self.files['model']):
+            return {"error": "Model chưa được train. Hãy chạy /train/ trước."}
+
+        # 2. Đọc dữ liệu mới
+        csv_path = os.path.join(self.DATA_DIR, csv_filename)
+        if not os.path.exists(csv_path):
+            return {"error": f"File {csv_filename} không tồn tại."}
+            
+        df_new = pd.read_csv(csv_path)
+        
+        # 3. Load Artifacts
+        model = joblib.load(self.files['model'])
+        scaler = joblib.load(self.files['scaler'])
+        encoder = joblib.load(self.files['encoder'])
+        with open(self.files['config'], 'r') as f:
+            config = json.load(f)
+
+        # 4. Tính RFM cho data mới
+        rfm_df = self._calculate_rfm(df_new)
+        if rfm_df.empty:
+            return {"error": "Không đủ dữ liệu để tính RFM"}
+            
+        # 5. Áp dụng Transformation (Giống hệt lúc Train)
+        # Quan trọng: Dùng tham số lambda từ config, KHÔNG tính lại lambda mới
+        rfm_process = rfm_df.copy()
+        
+        rfm_process['Recency'] = stats.boxcox(rfm_process['Recency'], lmbda=config['lambda_recency'])
+        rfm_process['Frequency'] = stats.boxcox(rfm_process['Frequency'], lmbda=config['lambda_frequency'])
+        rfm_process['Monetary'] = np.cbrt(rfm_process['Monetary'])
+
+        # 6. Áp dụng Scaling
+        X_new = scaler.transform(rfm_process[['Recency', 'Frequency', 'Monetary']])
+
+        # 7. Dự đoán
+        preds_encoded = model.predict(X_new)
+        preds_label = encoder.inverse_transform(preds_encoded)
+
+        # 8. Tổng hợp kết quả
+        rfm_df['Segment'] = preds_label
+        
+        # Lưu kết quả ra file CSV để người dùng xem
+        output_path = os.path.join(self.DATA_DIR, 'prediction_results.csv')
+        rfm_df.to_csv(output_path)
+
+        # Trả về JSON 5 dòng đầu để preview
+        return {
+            "status": "success",
+            "output_file": output_path,
+            "preview": rfm_df.head().to_dict(orient='index')
+        }

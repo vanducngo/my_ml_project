@@ -43,10 +43,10 @@ def retrain_all(request):
 
 # API 3: retrain_classifier
 @api_view(['POST'])
-def retrain_classifier(request):
+def relable_all(request):
     print("Chỉ train lại Classifier...")
     
     engine = RFMEngine()
-    result = engine.train()
+    result = engine.predict_customer()
     
     return JsonResponse(result)
