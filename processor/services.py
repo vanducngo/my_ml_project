@@ -351,58 +351,90 @@ class RFMEngine:
             }
         }
     
-    def predict(self, csv_filename='online_retail_II.csv'):
-        """Quy trình dự đoán cho dữ liệu mới"""
-        print("--- Bắt đầu quy trình Prediction ---")
+    def predict(self, csv_filename='online_retail_II.csv', use_db=False):
+        """
+        Quy trình dự đoán phân khúc cho TOÀN BỘ khách hàng (Batch Prediction).
+        Input: File CSV giao dịch hoặc lấy từ DB.
+        Output: File CSV kết quả chứa Customer ID, RFM, Cluster ID và Segment.
+        """
+        print("--- Bắt đầu quy trình Batch Prediction ---")
         
-        # 1. Kiểm tra file Model
-        if not os.path.exists(self.files['model']):
-            return {"error": "Model chưa được train. Hãy chạy /train/ trước."}
+        # 1. Kiểm tra Model & Config
+        if not os.path.exists(self.files['model']) or not os.path.exists(self.files['config']):
+            return {"status": "error", "message": "Model chưa được train. Hãy chạy /train/ trước."}
 
-        # 2. Đọc dữ liệu mới
-        csv_path = os.path.join(self.DATA_DIR, csv_filename)
-        if not os.path.exists(csv_path):
-            return {"error": f"File {csv_filename} không tồn tại."}
-            
-        df_new = pd.read_csv(csv_path)
+        # 2. Load Dữ Liệu
+        if use_db:
+            try:
+                df = self._load_data_from_db()
+            except Exception:
+                return {"status": "error", "message": "Lỗi kết nối DB."}
+        else:
+            csv_path = os.path.join(self.DATA_DIR, csv_filename)
+            if not os.path.exists(csv_path):
+                return {"status": "error", "message": f"File {csv_filename} không tồn tại."}
+            df = pd.read_csv(csv_path)
         
         # 3. Load Artifacts
         model = joblib.load(self.files['model'])
         scaler = joblib.load(self.files['scaler'])
-        encoder = joblib.load(self.files['encoder'])
         with open(self.files['config'], 'r') as f:
             config = json.load(f)
 
-        # 4. Tính RFM cho data mới
-        rfm_df = self._calculate_rfm(df_new)
+        # 4. Tiền xử lý & Tính RFM (Giống hệt quy trình Train)
+        # Bắt buộc phải chạy _preprocessing để lọc data rác
+        df = self._preprocessing(df)
+        rfm_df = self._calculate_rfm(df)
+        
         if rfm_df.empty:
-            return {"error": "Không đủ dữ liệu để tính RFM"}
+            return {"status": "error", "message": "Không đủ dữ liệu hợp lệ để tính RFM"}
             
-        # 5. Áp dụng Transformation (Giống hệt lúc Train)
-        # Quan trọng: Dùng tham số lambda từ config, KHÔNG tính lại lambda mới
+        # 5. Xử lý dữ liệu an toàn cho toán học (Box-Cox yêu cầu dương)
         rfm_process = rfm_df.copy()
         
-        rfm_process['Recency'] = stats.boxcox(rfm_process['Recency'], lmbda=config['lambda_recency'])
-        rfm_process['Frequency'] = stats.boxcox(rfm_process['Frequency'], lmbda=config['lambda_frequency'])
-        rfm_process['Monetary'] = np.cbrt(rfm_process['Monetary'])
+        # Xử lý Recency <= 0 (nếu có)
+        rfm_process['Recency'] = rfm_process['Recency'].apply(lambda x: 1 if x <= 0 else x)
+        # Xử lý Frequency <= 0 (ít khi xảy ra nhưng cần đề phòng)
+        rfm_process['Frequency'] = rfm_process['Frequency'].apply(lambda x: 1 if x <= 0 else x)
+        # Xử lý Monetary <= 0 (Căn bậc 3 chịu được số âm, nhưng log thì không. Ở đây ta dùng cbrt nên an toàn)
+        
+        # 6. Áp dụng Transformation (Dùng tham số từ Config)
+        try:
+            # Lưu ý: stats.boxcox(x, lmbda=...) trả về array đã transform
+            rfm_process['Recency'] = stats.boxcox(rfm_process['Recency'], lmbda=config['lambda_recency'])
+            rfm_process['Frequency'] = stats.boxcox(rfm_process['Frequency'], lmbda=config['lambda_frequency'])
+            rfm_process['Monetary'] = np.cbrt(rfm_process['Monetary'])
+        except Exception as e:
+            return {"status": "error", "message": f"Lỗi biến đổi dữ liệu: {str(e)}"}
 
-        # 6. Áp dụng Scaling
+        # 7. Áp dụng Scaling (Dùng Scaler đã train)
         X_new = scaler.transform(rfm_process[['Recency', 'Frequency', 'Monetary']])
 
-        # 7. Dự đoán
-        preds_encoded = model.predict(X_new)
-        preds_label = encoder.inverse_transform(preds_encoded)
+        # 8. Dự đoán Cluster ID
+        # Kết quả trả về là mảng các số nguyên [0, 4, 2, 1...]
+        cluster_ids = model.predict(X_new)
 
-        # 8. Tổng hợp kết quả
-        rfm_df['Segment'] = preds_label
+        # 9. Mapping sang Segment Name
+        # Config lưu keys dưới dạng string "0", "1"... cần convert về int
+        label_map = {int(k): v for k, v in config['label_map'].items()}
         
-        # Lưu kết quả ra file CSV để người dùng xem
-        output_path = os.path.join(self.DATA_DIR, 'prediction_results.csv')
-        rfm_df.to_csv(output_path)
+        rfm_df['Cluster_ID'] = cluster_ids
+        rfm_df['Segment'] = rfm_df['Cluster_ID'].map(label_map)
 
-        # Trả về JSON 5 dòng đầu để preview
+        # 10. Lưu kết quả
+        output_filename = f"prediction_results_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        output_path = os.path.join(self.DATA_DIR, output_filename)
+        rfm_df.to_csv(output_path, index=False)
+
+        print(f"--- Dự đoán xong. Đã lưu tại: {output_filename} ---")
+
+        # 11. Trả về Preview (5 dòng đầu)
+        # Convert sang dict và xử lý các kiểu dữ liệu numpy để tránh lỗi JSON
+        preview_data = rfm_df.head().to_dict(orient='records')
+        
         return {
             "status": "success",
             "output_file": output_path,
-            "preview": rfm_df.head().to_dict(orient='index')
+            "total_customers": len(rfm_df),
+            "preview": preview_data
         }
