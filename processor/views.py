@@ -23,14 +23,19 @@ def new_transaction(request):
         float_val = float(customer_id)
         # Kiểm tra xem nó có phải số nguyên không (vd: 123.0 là OK, 123.5 là Fail)
         if not float_val.is_integer():
-            return {"status": "error", "message": "Customer ID must be an integer (e.g., 12345)"}
-        
+            return Response(
+                {"status": "error", "message": "Customer ID must be an integer (e.g., 12345)"},
+                status=status.HTTP_400_BAD_REQUEST
+            )        
         # Nếu OK, chuẩn hóa về dạng số nguyên string (bỏ .0)
         customer_id = str(int(float_val))
     except Exception as e:
         print(f'Exception: {e}')
         # Nếu không thể convert sang float -> chắc chắn chứa ký tự chữ
-        return {"status": "error", "message": f"Invalid Customer ID format: '{customer_id}'. Must contains digits only."}
+        return Response(
+                {"status": "error", "message": f"Invalid Customer ID format: '{customer_id}'. Must contains digits only."},
+                status=status.HTTP_400_BAD_REQUEST
+            )        
 
     # --- Code xử lý logic transaction ở đây ---
     print(f"Đang xử lý giao dịch cho khách hàng: {customer_id}")
