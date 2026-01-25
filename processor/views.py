@@ -17,8 +17,8 @@ def new_transaction(request):
             status=status.HTTP_400_BAD_REQUEST
         )
 
-    customer_id = str(customer_id).strip()
     try:
+        customer_id = str(customer_id).strip()
         # Thử convert sang float trước để bắt trường hợp '12345.0'
         float_val = float(customer_id)
         # Kiểm tra xem nó có phải số nguyên không (vd: 123.0 là OK, 123.5 là Fail)
@@ -27,7 +27,8 @@ def new_transaction(request):
         
         # Nếu OK, chuẩn hóa về dạng số nguyên string (bỏ .0)
         customer_id = str(int(float_val))
-    except ValueError:
+    except Exception as e:
+        print(f'Exception: {e}')
         # Nếu không thể convert sang float -> chắc chắn chứa ký tự chữ
         return {"status": "error", "message": f"Invalid Customer ID format: '{customer_id}'. Must contains digits only."}
 
