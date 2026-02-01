@@ -179,9 +179,7 @@ class RFMEngine:
         rfm_full = rfm_df.copy()
         rfm_full['Cluster'] = clusters # Cluster ID: 0, 1, 2, 3, 4 (Ngẫu nhiên)
 
-        # ==========================================================
-        # 7. AUTO-MAPPING LOGIC (Tự động gán nhãn dựa trên Data)
-        # ==========================================================
+        # 7. Gán nhãn tự động (Auto-Mapping)
         print("--- Bắt đầu gán nhãn tự động (Auto-Mapping) ---")
         
         # Tính trung bình R, F, M cho từng cụm
@@ -195,24 +193,37 @@ class RFMEngine:
         label_map = {}
 
         # Rule 1: Tiền nhiều nhất -> VIP
+        # Logic: Cụm có Monetary Cao Nhất
         vip_id = summary.loc[available_clusters]['Monetary'].idxmax()
         label_map[int(vip_id)] = 'Khách hàng VIP'
         available_clusters.remove(vip_id)
 
         # Rule 2: Recency cao nhất (lâu không mua) -> Rời bỏ
+        # Logic: Cụm có Recency Cao Nhất (Lâu chưa mua)
         lost_id = summary.loc[available_clusters]['Recency'].idxmax()
         label_map[int(lost_id)] = 'Nguy cơ rời bỏ'
         available_clusters.remove(lost_id)
 
-        # Rule 3: Recency thấp nhất trong đám còn lại (mới mua) -> Trung thành
+        # --- Rule 3: Khách hàng Mới ---
+        # Logic: Min(Recency) + Min(Monetary)
+        # Ta tính rank (thứ hạng) cho R và M trong các cụm còn lại.
+        # Cụm nào có tổng hạng thấp nhất -> Mới
+        current_subset = summary.loc[available_clusters]
+        # Rank tăng dần (nhỏ nhất là 1)
+        r_rank = current_subset['Recency'].rank(ascending=True)
+        m_rank = current_subset['Monetary'].rank(ascending=True)
+        # Tổng điểm (Score càng thấp càng khớp tiêu chí Mới: R thấp, M thấp)
+        new_score = r_rank + m_rank
+        new_id = new_score.idxmin()
+        label_map[int(new_id)] = 'Khách hàng Mới'
+        available_clusters.remove(new_id)
+
+        # --- Rule 4: Khách hàng Trung thành ---
+        # Logic: Min(Recency) trong các cụm còn lại
+        # (Không phải Mới, không phải VIP, nhưng mua gần đây -> Trung thành)
         loyal_id = summary.loc[available_clusters]['Recency'].idxmin()
         label_map[int(loyal_id)] = 'Khách hàng Trung thành'
         available_clusters.remove(loyal_id)
-
-        # Rule 4: Tiền ít nhất trong đám còn lại -> Mới
-        new_id = summary.loc[available_clusters]['Monetary'].idxmin()
-        label_map[int(new_id)] = 'Khách hàng Mới'
-        available_clusters.remove(new_id)
 
         # Rule 5: Còn lại -> Tiềm năng
         potential_id = available_clusters[0]
