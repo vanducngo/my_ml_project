@@ -143,7 +143,7 @@ class RFMEngine:
         Helper chuyển DataFrame thành List Dict để trả về API/Webhook.
         Xử lý an toàn cho JSON (NaN, Infinity).
         """
-        print(f"start => _format_for_webhook")
+        print("Ben Trong ham _format_for_webhook")
         # Thay thế NaN, Inf trong DataFrame bằng None (null trong JSON)
         df_result = df_result.replace([np.inf, -np.inf, np.nan], None)
         
@@ -334,7 +334,10 @@ class RFMEngine:
         rfm_df['Segment'] = pd.Series(all_clusters).map(label_map)
         
         # Format kết quả
+        print("Chuan bi call _format_for_webhook")
         webhook_data = self._format_for_webhook(rfm_df)
+        print("Da call xong _format_for_webhook")
+
 
         return {
             "status": "success", 
