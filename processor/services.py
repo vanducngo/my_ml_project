@@ -43,13 +43,13 @@ class RFMEngine:
         Hàm thay thế load_db: Tải toàn bộ dữ liệu từ API có phân trang.
         Cơ chế: Loop liên tục tăng offset cho đến khi returned_records = 0.
         """
-        print(f"--- Đang tải dữ liệu từ API: {self.DATA_API_URL} ---")
         
         all_records = []
         limit = 5000  # Tăng limit lên để giảm số lần request (Network overhead)
         offset = 0
         page = 1
         
+        print(f"--- Đang tải dữ liệu từ API: {self.DATA_API_URL} Limit:{limit}-Offset:{offset}---")
         try:
             while True:
                 # Gọi API
@@ -257,7 +257,7 @@ class RFMEngine:
         potential_id = available_clusters[0]
         label_map[int(potential_id)] = 'Khách hàng Tiềm năng'
 
-        print("Mapping Logic được tạo ra:", label_map)
+        # print("Mapping Logic được tạo ra:", label_map)
         
         # Áp dụng mapping vào DataFrame để visual (nếu cần)
         rfm_full['Segment'] = rfm_full['Cluster'].map(label_map)
