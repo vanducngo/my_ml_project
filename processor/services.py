@@ -237,7 +237,7 @@ class RFMEngine:
         # Rule 1: Tiền nhiều nhất -> VIP
         # Logic: Cụm có Monetary Cao Nhất
         vip_id = summary.loc[available_clusters]['Monetary'].idxmax()
-        label_map[int(vip_id)] = 'Khách hàng VIP'
+        label_map[int(vip_id)] = 'VIP'
         available_clusters.remove(vip_id)
 
         # Rule 2: Recency cao nhất (lâu không mua) -> Rời bỏ
@@ -257,19 +257,19 @@ class RFMEngine:
         # Tổng điểm (Score càng thấp càng khớp tiêu chí Mới: R thấp, M thấp)
         new_score = r_rank + m_rank
         new_id = new_score.idxmin()
-        label_map[int(new_id)] = 'Khách hàng Mới'
+        label_map[int(new_id)] = 'Mới'
         available_clusters.remove(new_id)
 
         # --- Rule 4: Khách hàng Trung thành ---
         # Logic: Min(Recency) trong các cụm còn lại
         # (Không phải Mới, không phải VIP, nhưng mua gần đây -> Trung thành)
         loyal_id = summary.loc[available_clusters]['Recency'].idxmin()
-        label_map[int(loyal_id)] = 'Khách hàng Trung thành'
+        label_map[int(loyal_id)] = 'Trung thành'
         available_clusters.remove(loyal_id)
 
         # Rule 5: Còn lại -> Tiềm năng
         potential_id = available_clusters[0]
-        label_map[int(potential_id)] = 'Khách hàng Tiềm năng'
+        label_map[int(potential_id)] = 'Tiềm năng'
 
         # print("Mapping Logic được tạo ra:", label_map)
         
