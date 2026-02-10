@@ -45,7 +45,7 @@ class RFMEngine:
         """
         
         all_records = []
-        limit = 5000  # Tăng limit lên để giảm số lần request (Network overhead)
+        limit = 50000  # Tăng limit lên để giảm số lần request (Network overhead)
         offset = 0
         page = 1
         
@@ -139,15 +139,33 @@ class RFMEngine:
         return df_clean
 
     def _format_for_webhook(self, df_result):
-        """Helper format JSON trả về"""
+        """
+        Helper chuyển DataFrame thành List Dict để trả về API/Webhook.
+        Xử lý an toàn cho JSON (NaN, Infinity).
+        """
+        # Thay thế NaN, Inf trong DataFrame bằng None (null trong JSON)
+        df_clean = df_result.replace([np.inf, -np.inf, np.nan], None)
+        
         results = []
-        for _, row in df_result.iterrows():
+        for _, row in df_clean.iterrows():
+            # Xử lý Customer ID
+            cust_id_raw = str(row['Customer ID'])
+            if cust_id_raw.replace('.', '', 1).isdigit():
+                cust_id_str = str(int(float(cust_id_raw)))
+            else:
+                cust_id_str = cust_id_raw
+
+            # Xử lý Label (nếu None thì gán mặc định)
+            label = row['Segment']
+            if label is None:
+                label = "Unknown"
+
             results.append({
-                "customer_id": str(row['Customer ID']),
-                "label": row['Segment'],
-                "recency_score": int(row['Recency']),       
-                "frequency_score": int(row['Frequency']),   
-                "monetary_score": float(round(row['Monetary'], 2))
+                "customer_id": cust_id_str,
+                "label": label,
+                "recency_score": int(row['Recency']) if row['Recency'] is not None else 0,
+                "frequency_score": int(row['Frequency']) if row['Frequency'] is not None else 0,
+                "monetary_score": float(round(row['Monetary'], 2)) if row['Monetary'] is not None else 0.0
             })
         return results
 
