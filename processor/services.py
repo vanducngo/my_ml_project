@@ -152,7 +152,7 @@ class RFMEngine:
             # Xử lý Customer ID
             cust_id_raw = str(row['Customer ID'])
             if cust_id_raw.replace('.', '', 1).isdigit():
-                cust_id_str = str(int(float(cust_id_raw)))
+                cust_id_str = cust_id_raw
             else:
                 cust_id_str = cust_id_raw
 
@@ -517,7 +517,7 @@ class RFMEngine:
         results = []
         for _, row in df_result.iterrows():
             results.append({
-                "customer_id": str(int(float(row['Customer ID']))) if str(row['Customer ID']).replace('.','').isdigit() else str(row['Customer ID']),
+                "customer_id": row['Customer ID'],
                 "label": row['Segment'],
                 "recency_score": int(row['Recency']),       # Giá trị ngày thực tế
                 "frequency_score": int(row['Frequency']),   # Số lần mua thực tế
