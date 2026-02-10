@@ -170,6 +170,39 @@ class RFMEngine:
             })
 
         return results
+    
+    def _format_for_data_webhook(self, df_result):
+        """
+        Helper chuyển DataFrame thành List Dict để trả về API/Webhook.
+        Xử lý an toàn cho JSON (NaN, Infinity).
+        """
+        print("Ben Trong ham _format_for_data_webhook")
+        # Thay thế NaN, Inf trong DataFrame bằng None (null trong JSON)
+        df_result = df_result.replace([np.inf, -np.inf, np.nan], None)
+        
+        results = []
+        for _, row in df_result.iterrows():
+            # Xử lý Customer ID
+            cust_id_raw = str(row['Customer ID'])
+            if cust_id_raw.replace('.', '', 1).isdigit():
+                cust_id_str = str(int(float(cust_id_raw)))
+            else:
+                cust_id_str = cust_id_raw
+
+            # Xử lý Label (nếu None thì gán mặc định)
+            label = row['Segment']
+            if label is None:
+                label = "Unknown"
+
+            results.append({
+                "customer_id": cust_id_str,
+                "label": label,
+                "recency_score": int(row['Recency']) if row['Recency'] is not None else 0,
+                "frequency_score": int(row['Frequency']) if row['Frequency'] is not None else 0,
+                "monetary_score": float(round(row['Monetary'], 2)) if row['Monetary'] is not None else 0.0
+            })
+
+        return results
 
     def train(self):
         """
@@ -335,7 +368,7 @@ class RFMEngine:
         
         # Format kết quả
         print("Chuan bi call _format_for_webhook")
-        webhook_data = self._format_for_webhook(rfm_df)
+        webhook_data = self._format_for_data_webhook(rfm_df)
         print("Da call xong _format_for_webhook")
 
 
