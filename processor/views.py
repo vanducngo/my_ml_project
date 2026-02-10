@@ -68,7 +68,7 @@ def new_transaction(request):
     result = engine.predict_customer(customer_id)
 
     if result.get('status') == 'success':
-        print(f"new_transaction success => Start send backdata: {result['data']}")
+        # print(f"new_transaction success => Start send backdata: {result['data']}")
         threading.Thread(target=send_webhook, args=(result['data'],)).start()
     
     print(f"new_transaction -> Result: {result}")
