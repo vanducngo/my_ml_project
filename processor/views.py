@@ -8,6 +8,8 @@ import json
 import requests
 import threading
 from django.views.decorators.csrf import csrf_exempt
+from django.core.cache import cache
+
 
 CALLBACK_URL = "http://61.28.226.98:9000/api/label_change/"
 
@@ -31,6 +33,7 @@ def send_webhook(data):
 # API 1: new_transaction (Nhận customer_id)
 @api_view(['POST'])
 def new_transaction(request):
+    cache.clear()
     # Lấy customer_id từ dữ liệu gửi lên (Body JSON)
     customer_id = request.data.get('customer_id')
 
@@ -67,6 +70,7 @@ def new_transaction(request):
 # API 2: retrain_all
 @api_view(['POST'])
 def retrain_all(request):
+    cache.clear()
     print("Bắt đầu train lại toàn bộ hệ thống...")
     
     # --- Giả lập quá trình train ---
@@ -84,6 +88,7 @@ def retrain_all(request):
 # API 3: retrain_classifier
 @api_view(['POST'])
 def relabel_all(request):
+    cache.clear()
     print("relabel_all...")
     
     engine = RFMEngine()
