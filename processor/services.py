@@ -350,6 +350,8 @@ class RFMEngine:
         api_url = f"{self.DATA_API_URL}?customer_id={customer_id}"
         try:
             response = requests.get(api_url, timeout=10)
+            print(f"API: {api_url}")
+            print(f"Response: {response}")
             if response.status_code != 200:
                  return {"status": "error", "message": f"API Error: {response.status_code}"}
             
