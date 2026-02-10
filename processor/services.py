@@ -143,11 +143,12 @@ class RFMEngine:
         Helper chuyển DataFrame thành List Dict để trả về API/Webhook.
         Xử lý an toàn cho JSON (NaN, Infinity).
         """
+        print(f"start => _format_for_webhook")
         # Thay thế NaN, Inf trong DataFrame bằng None (null trong JSON)
-        df_clean = df_result.replace([np.inf, -np.inf, np.nan], None)
+        df_result = df_result.replace([np.inf, -np.inf, np.nan], None)
         
         results = []
-        for _, row in df_clean.iterrows():
+        for _, row in df_result.iterrows():
             # Xử lý Customer ID
             cust_id_raw = str(row['Customer ID'])
             if cust_id_raw.replace('.', '', 1).isdigit():
@@ -168,7 +169,6 @@ class RFMEngine:
                 "monetary_score": float(round(row['Monetary'], 2)) if row['Monetary'] is not None else 0.0
             })
 
-        print(f"fdskfsdfsd: {results}")
         return results
 
     def train(self):
