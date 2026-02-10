@@ -315,7 +315,7 @@ class RFMEngine:
         print("--- Train xong. Tự động chuyển sang Predict ---")
         return self.predict()
 
-    def predict_customer(self, customer_id, csv_filename='online_retail_II.csv'):
+    def predict_customer(self, customer_id):
         """
         Dự đoán phân khúc cho MỘT khách hàng cụ thể.
         Trả về cả Cluster ID (Số) và Segment Name (Chữ).
@@ -325,14 +325,6 @@ class RFMEngine:
         # 1. Kiểm tra Model & Config
         if not os.path.exists(self.files['model']):
             return {"status": "error", "message": "Model chưa được train. Hãy chạy /train/ trước."}
-
-        # 2. Đọc file CSV gốc (Lấy lịch sử giao dịch)
-        # csv_path = os.path.join(self.DATA_DIR, csv_filename)
-        # if not os.path.exists(csv_path):
-        #     return {"status": "error", "message": f"File {csv_filename} không tồn tại."}
-        
-        # df = pd.read_csv(csv_path)
-        
 
         api_url = f"{self.DATA_API_URL}?customer_id={customer_id}"
         try:
@@ -363,7 +355,7 @@ class RFMEngine:
         global_latest_date = datetime.datetime.now() + datetime.timedelta(days=1)
 
         # 5. Lọc dữ liệu Customer
-        str_customer_id = str(int(float(customer_id))) # Chuẩn hóa ID
+        str_customer_id = customer_id
         df['Customer ID'] = df['Customer ID'].astype(float).astype(int).astype(str)
         
         customer_df = df[df['Customer ID'] == str_customer_id]

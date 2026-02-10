@@ -59,11 +59,9 @@ def new_transaction(request):
         print(f'Exception: {e}')
         # Nếu không thể convert sang float -> chắc chắn chứa ký tự chữ
         return Response(
-                {"status": "error", "message": f"Invalid Customer ID format: '{customer_id}'. Must contains digits only."},
+                {"status": "error", "message": f"Error - '{e}'"},
                 status=status.HTTP_400_BAD_REQUEST
-            )        
-
-    
+            )     
 
 
 # API 2: retrain_all
