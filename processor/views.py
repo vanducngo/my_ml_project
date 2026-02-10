@@ -44,7 +44,7 @@ def new_transaction(request):
         )
 
     try:
-        customer_id = str(customer_id).strip()
+        customer_id = customer_id.strip()
         # --- Code xử lý logic transaction ở đây ---
         print(f"Đang xử lý giao dịch cho khách hàng: {customer_id}")
         
@@ -60,7 +60,6 @@ def new_transaction(request):
         return JsonResponse(result)
     except Exception as e:
         print(f'Exception: {e}')
-        # Nếu không thể convert sang float -> chắc chắn chứa ký tự chữ
         return Response(
                 {"status": "error", "message": f"Error - '{e}'"},
                 status=status.HTTP_400_BAD_REQUEST
