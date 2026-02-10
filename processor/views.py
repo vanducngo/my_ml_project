@@ -86,7 +86,7 @@ def retrain_all(request):
     result = engine.train()
     
     if result.get('status') == 'success':
-        print(f'retrain_all success => Start send backdata: {result['data']}')
+        print(f"retrain_all success => Start send backdata: {result['data']}")
         threading.Thread(target=send_webhook, args=(result['data'],)).start()
 
     return JsonResponse(result)
@@ -100,6 +100,6 @@ def relabel_all(request):
     engine = RFMEngine()
     result = engine.predict()
     if result.get('status') == 'success':
-        print(f'relabel_all success => Start send backdata: {result['data']}')
+        print(f"relabel_all success => Start send backdata: {result['data']}")
         threading.Thread(target=send_webhook, args=(result['data'],)).start()
     return JsonResponse(result)
