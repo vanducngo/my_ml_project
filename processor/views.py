@@ -4,6 +4,29 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.http import JsonResponse
 import time
+import json
+import requests
+import threading
+from django.views.decorators.csrf import csrf_exempt
+
+CALLBACK_URL = "http://61.28.226.98:9000/api/label_change/"
+
+def send_webhook(data):
+    """Hàm chạy ngầm để gửi dữ liệu đi mà không block request chính"""
+    try:
+        if not data:
+            return
+            
+        print(f"--- Đang gửi Webhook tới {CALLBACK_URL} ({len(data)} records) ---")
+        response = requests.post(
+            CALLBACK_URL, 
+            json=data, 
+            headers={'Content-Type': 'application/json'},
+            timeout=10
+        )
+        print(f"--- Webhook Response: {response.status_code} ---")
+    except Exception as e:
+        print(f"--- Lỗi gửi Webhook: {e} ---")
 
 # API 1: new_transaction (Nhận customer_id)
 @api_view(['POST'])
@@ -43,6 +66,10 @@ def new_transaction(request):
     engine = RFMEngine()
     result = engine.predict_customer(customer_id)
 
+    if result.get('status') == 'success':
+        print(f'new_transaction success => Start send backdata: {result['data']}')
+        threading.Thread(target=send_webhook, args=(result['data'],)).start()
+    
     print(f"new_transaction -> Result: {result}")
 
     return JsonResponse(result)
@@ -58,6 +85,10 @@ def retrain_all(request):
     engine = RFMEngine()
     result = engine.train()
     
+    if result.get('status') == 'success':
+        print(f'retrain_all success => Start send backdata: {result['data']}')
+        threading.Thread(target=send_webhook, args=(result['data'],)).start()
+
     return JsonResponse(result)
 
 
@@ -68,5 +99,7 @@ def relabel_all(request):
     
     engine = RFMEngine()
     result = engine.predict()
-    
+    if result.get('status') == 'success':
+        print(f'relabel_all success => Start send backdata: {result['data']}')
+        threading.Thread(target=send_webhook, args=(result['data'],)).start()
     return JsonResponse(result)

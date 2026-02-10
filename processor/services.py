@@ -2,6 +2,7 @@ import os
 import joblib
 import datetime
 import json
+import requests
 import pandas as pd
 import numpy as np
 from scipy import stats
@@ -35,44 +36,57 @@ class RFMEngine:
         }
 
         # Cấu hình DB Odoo (Docker container name hoặc localhost)
-        self.DB_CONNECTION_STR = "postgresql+psycopg2://odoo:89b39fdsfd8af8ds7a98fdsa19ec6c6@localhost:5432/DotB"
+        self.DATA_API_URL = "http://61.28.226.98:9000/api/get_transactions/"
 
-    def _load_data_from_db(self):
-        """Hàm lấy dữ liệu trực tiếp từ PostgreSQL của Odoo"""
-        print("--- Đang kết nối Database Odoo để lấy dữ liệu ---")
+    def _load_data_from_api(self):
+        """
+        Hàm thay thế load_db: Tải toàn bộ dữ liệu từ API có phân trang.
+        Cơ chế: Loop liên tục tăng offset cho đến khi returned_records = 0.
+        """
+        print(f"--- Đang tải dữ liệu từ API: {self.DATA_API_URL} ---")
+        
+        all_records = []
+        limit = 5000  # Tăng limit lên để giảm số lần request (Network overhead)
+        offset = 0
+        page = 1
+        
         try:
-            engine = create_engine(self.DB_CONNECTION_STR)
+            while True:
+                # Gọi API
+                params = {'limit': limit, 'offset': offset}
+                response = requests.get(self.DATA_API_URL, params=params, timeout=30)
+                
+                if response.status_code != 200:
+                    raise Exception(f"API Error {response.status_code}: {response.text}")
+                
+                data = response.json()
+                metadata = data.get('metadata', {})
+                records = data.get('records', [])
+                
+                count = len(records)
+                if count == 0:
+                    break  # Hết dữ liệu
+                
+                all_records.extend(records)
+                print(f"Page {page}: Loaded {count} records (Offset: {offset})")
+                
+                offset += count
+                page += 1
+                
+                # Safety break (đề phòng vòng lặp vô tận nếu API lỗi)
+                if metadata.get('returned_records', 0) == 0:
+                    break
+
+            print(f"--- Tải hoàn tất: {len(all_records)} dòng dữ liệu ---")
             
-            query = """
-                SELECT 
-                    so.name as "Invoice",
-                    pp.default_code as "StockCode",
-                    sol.name as "Description",
-                    sol.product_uom_qty as "Quantity",
-                    so.date_order as "InvoiceDate",
-                    sol.price_unit as "Price",
-                    rp.id as "Customer ID",
-                    rc.name as "Country"
-                FROM sale_order_line sol
-                JOIN sale_order so ON sol.order_id = so.id
-                LEFT JOIN res_partner rp ON so.partner_id = rp.id
-                LEFT JOIN product_product pp ON sol.product_id = pp.id
-                LEFT JOIN res_country rc ON rp.country_id = rc.id
-                WHERE so.state IN ('sale', 'done') 
-                AND sol.product_uom_qty > 0
-            """
-            
-            df = pd.read_sql(query, engine)
-            print(f"--- Đã tải {len(df)} dòng dữ liệu từ Database ---")
-            
-            # Xử lý Customer ID bị thiếu
-            df = df.dropna(subset=['Customer ID'])
+            # Convert list of dicts to DataFrame
+            df = pd.DataFrame(all_records)
             return df
             
         except Exception as e:
-            print(f"LỖI KẾT NỐI DB: {e}")
+            print(f"LỖI TẢI DỮ LIỆU API: {e}")
             raise e
-
+        
     def _preprocessing(self, df):
         print("Tiền xử lý dữ liệu - Start")
         df['InvoiceDate'] = pd.to_datetime(df['InvoiceDate'])
@@ -124,7 +138,20 @@ class RFMEngine:
         print(f"Số điểm ngoại lai đã bị loại bỏ: {initial_count - df_clean.shape[0]}")
         return df_clean
 
-    def train(self, csv_filename='online_retail_II.csv', use_db=False):
+    def _format_for_webhook(self, df_result):
+        """Helper format JSON trả về"""
+        results = []
+        for _, row in df_result.iterrows():
+            results.append({
+                "customer_id": str(row['Customer ID']),
+                "label": row['Segment'],
+                "recency_score": int(row['Recency']),       
+                "frequency_score": int(row['Frequency']),   
+                "monetary_score": float(round(row['Monetary'], 2))
+            })
+        return results
+
+    def train(self, csv_filename='online_retail_II.csv', use_api=False):
         """
         Quy trình huấn luyện Model từ đầu.
         Có thể chọn nguồn dữ liệu từ CSV hoặc Database.
@@ -132,11 +159,12 @@ class RFMEngine:
         print("--- Bắt đầu quy trình Training ---")
         
         # 1. Load Dữ Liệu (DB hoặc CSV)
-        if use_db:
+        if use_api:
             try:
-                df = self._load_data_from_db()
-            except Exception:
-                return {"status": "error", "message": "Lỗi DB. Vui lòng kiểm tra log."}
+                print("LoadData Prom API")
+                df = self._load_data_from_api()
+            except Exception as e:
+                return {"status": "error", "message": str(e)}
         else:
             csv_path = os.path.join(self.DATA_DIR, csv_filename)
             if not os.path.exists(csv_path):
@@ -269,10 +297,35 @@ class RFMEngine:
         with open(self.files['config'], 'w') as f:
             json.dump(config, f)
 
+        
+        # =========================================================
+        # TỐI ƯU HÓA: DỰ ĐOÁN LUÔN TRÊN TOÀN BỘ DATA ĐÃ TẢI
+        # (Không gọi lại API, dùng biến rfm_df_all)
+        # =========================================================
+        print("--- Đang thực hiện gán nhãn lại cho TOÀN BỘ dữ liệu ---")
+        
+        rfm_predict = rfm_df.copy()
+        
+        # Transform & Predict
+        rfm_predict['Recency'] = rfm_predict['Recency'].apply(lambda x: 1 if x <= 0 else x)
+        rfm_predict['Frequency'] = rfm_predict['Frequency'].apply(lambda x: 1 if x <= 0 else x)
+        
+        rfm_predict['Recency'] = stats.boxcox(rfm_predict['Recency'], lmbda=lmbda_r)
+        rfm_predict['Frequency'] = stats.boxcox(rfm_predict['Frequency'], lmbda=lmbda_f)
+        rfm_predict['Monetary'] = np.cbrt(rfm_predict['Monetary'])
+        
+        X_all_new = scaler.transform(rfm_predict[['Recency', 'Frequency', 'Monetary']])
+        all_clusters = model.predict(X_all_new)
+        
+        rfm_df['Segment'] = pd.Series(all_clusters).map(label_map)
+        
+        # Format kết quả
+        webhook_data = self._format_for_webhook(rfm_df)
+
         return {
             "status": "success", 
-            "message": "Training hoàn tất. Mapping logic đã được cập nhật.",
-            "mapping": label_map
+            "message": "Retrain & Relabel thành công.",
+            "data": webhook_data
         }
 
     def predict_customer(self, customer_id, csv_filename='online_retail_II.csv'):
@@ -287,12 +340,30 @@ class RFMEngine:
             return {"status": "error", "message": "Model chưa được train. Hãy chạy /train/ trước."}
 
         # 2. Đọc file CSV gốc (Lấy lịch sử giao dịch)
-        csv_path = os.path.join(self.DATA_DIR, csv_filename)
-        if not os.path.exists(csv_path):
-            return {"status": "error", "message": f"File {csv_filename} không tồn tại."}
+        # csv_path = os.path.join(self.DATA_DIR, csv_filename)
+        # if not os.path.exists(csv_path):
+        #     return {"status": "error", "message": f"File {csv_filename} không tồn tại."}
         
-        df = pd.read_csv(csv_path)
+        # df = pd.read_csv(csv_path)
         
+
+        api_url = f"{self.DATA_API_URL}?customer_id={customer_id}"
+        try:
+            response = requests.get(api_url, timeout=10)
+            if response.status_code != 200:
+                 return {"status": "error", "message": f"API Error: {response.status_code}"}
+            
+            data = response.json()
+            records = data.get('records', [])
+            
+            if not records:
+                return {"status": "error", "message": f"Không tìm thấy giao dịch nào của KH {customer_id}"}
+                
+            df = pd.DataFrame(records)
+            
+        except Exception as e:
+            return {"status": "error", "message": f"Lỗi gọi API: {str(e)}"}
+
         # 3. Preprocessing nhanh
         df['InvoiceDate'] = pd.to_datetime(df['InvoiceDate'])
         df = df[df['Quantity'] > 0]
@@ -300,7 +371,7 @@ class RFMEngine:
         df = df.dropna(subset=['Customer ID'])
 
         # 4. Xác định ngày mốc toàn cục
-        global_latest_date = df['InvoiceDate'].max() + datetime.timedelta(days=1)
+        global_latest_date = datetime.datetime.now() + datetime.timedelta(days=1)
 
         # 5. Lọc dữ liệu Customer
         str_customer_id = str(int(float(customer_id))) # Chuẩn hóa ID
@@ -348,18 +419,25 @@ class RFMEngine:
         segment_name = label_map.get(pred_cluster_id, "Không xác định")
 
         # 10. Trả về kết quả (đã ép kiểu native python để tránh lỗi JSON)
+        result_item = {
+            "customer_id": str(customer_id),
+            "label": segment_name, # Biến segment_name lấy từ logic predict cũ
+            "recency_score": int(recency),
+            "frequency_score": int(frequency),
+            "monetary_score": float(round(monetary, 2))
+        }
+
+        result_item = {
+            "customer_id": str(customer_id),
+            "label": segment_name,
+            "recency_score": int(recency),
+            "frequency_score": int(frequency),
+            "monetary_score": float(round(monetary, 2))
+        }
+
         return {
             "status": "success",
-            "customer_id": str_customer_id,
-            "rfm_stats": {
-                "recency": int(recency),
-                "frequency": int(frequency),
-                "monetary": float(round(monetary, 2))
-            },
-            "prediction": {
-                "cluster_id": pred_cluster_id,
-                "segment": segment_name
-            }
+            "data": [result_item]
         }
     
     def predict(self, csv_filename='online_retail_II.csv', use_db=False):
@@ -375,16 +453,10 @@ class RFMEngine:
             return {"status": "error", "message": "Model chưa được train. Hãy chạy /train/ trước."}
 
         # 2. Load Dữ Liệu
-        if use_db:
-            try:
-                df = self._load_data_from_db()
-            except Exception:
-                return {"status": "error", "message": "Lỗi kết nối DB."}
-        else:
-            csv_path = os.path.join(self.DATA_DIR, csv_filename)
-            if not os.path.exists(csv_path):
-                return {"status": "error", "message": f"File {csv_filename} không tồn tại."}
-            df = pd.read_csv(csv_path)
+        try:
+            df = self._load_data_from_api()
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
         
         # 3. Load Artifacts
         model = joblib.load(self.files['model'])
@@ -433,19 +505,41 @@ class RFMEngine:
         rfm_df['Segment'] = rfm_df['Cluster_ID'].map(label_map)
 
         # 10. Lưu kết quả
-        output_filename = f"prediction_results_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-        output_path = os.path.join(self.DATA_DIR, output_filename)
-        rfm_df.to_csv(output_path, index=False)
+        # output_filename = f"prediction_results_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        # output_path = os.path.join(self.DATA_DIR, output_filename)
+        # rfm_df.to_csv(output_path, index=False)
 
-        print(f"--- Dự đoán xong. Đã lưu tại: {output_filename} ---")
+        # print(f"--- Dự đoán xong. Đã lưu tại: {output_filename} ---")
 
         # 11. Trả về Preview (5 dòng đầu)
         # Convert sang dict và xử lý các kiểu dữ liệu numpy để tránh lỗi JSON
-        preview_data = rfm_df.head().to_dict(orient='records')
+        webhook_data = self._format_for_webhook(rfm_df)
         
         return {
             "status": "success",
-            "output_file": output_path,
-            "total_customers": len(rfm_df),
-            "preview": preview_data
+            "data": webhook_data
         }
+    
+    def _format_for_webhook(self, df_result):
+        """
+        Helper chuyển DataFrame thành List Dict:
+        [
+            {
+                "customer_id": "13085",
+                "label": "Mới",
+                "recency_score": 5,
+                "frequency_score": 2,
+                "monetary_score": 3
+            }, ...
+        ]
+        """
+        results = []
+        for _, row in df_result.iterrows():
+            results.append({
+                "customer_id": str(int(float(row['Customer ID']))) if str(row['Customer ID']).replace('.','').isdigit() else str(row['Customer ID']),
+                "label": row['Segment'],
+                "recency_score": int(row['Recency']),       # Giá trị ngày thực tế
+                "frequency_score": int(row['Frequency']),   # Số lần mua thực tế
+                "monetary_score": float(round(row['Monetary'], 2)) # Số tiền thực tế
+            })
+        return results
