@@ -321,13 +321,17 @@ class RFMEngine:
         Dự đoán phân khúc cho MỘT khách hàng cụ thể.
         Trả về cả Cluster ID (Số) và Segment Name (Chữ).
         """
+        print("1")
         print(f"--- Bắt đầu dự đoán cho Customer ID: {customer_id} ---")
+        print("2")
 
         # 1. Kiểm tra Model & Config
         if not os.path.exists(self.files['model']):
             return {"status": "error", "message": "Model chưa được train. Hãy chạy /train/ trước."}
 
+        print("3")
         api_url = f"{self.DATA_API_URL}?customer_id={customer_id}"
+        print("4")
         try:
             response = requests.get(api_url, timeout=10)
             print(f"API: {api_url}")
@@ -355,11 +359,8 @@ class RFMEngine:
         # 4. Xác định ngày mốc toàn cục
         global_latest_date = datetime.datetime.now() + datetime.timedelta(days=1)
 
-        # 5. Lọc dữ liệu Customer
-        str_customer_id = customer_id
-        df['Customer ID'] = df['Customer ID'].astype(float).astype(int).astype(str)
-        
-        customer_df = df[df['Customer ID'] == str_customer_id]
+        # 5. Lọc dữ liệu Customer        
+        customer_df = df[df['Customer ID'] == customer_id]
 
         if customer_df.empty:
             return {"status": "error", "message": f"Không tìm thấy Customer ID {customer_id}"}
