@@ -167,6 +167,8 @@ class RFMEngine:
                 "frequency_score": int(row['Frequency']) if row['Frequency'] is not None else 0,
                 "monetary_score": float(round(row['Monetary'], 2)) if row['Monetary'] is not None else 0.0
             })
+
+        print(f"fdskfsdfsd: {results}")
         return results
 
     def train(self):
