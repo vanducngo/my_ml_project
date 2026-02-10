@@ -42,17 +42,19 @@ def new_transaction(request):
 
     try:
         customer_id = str(customer_id).strip()
-        # Thử convert sang float trước để bắt trường hợp '12345.0'
-        float_val = float(customer_id)
-        # Kiểm tra xem nó có phải số nguyên không (vd: 123.0 là OK, 123.5 là Fail)
-        if not float_val.is_integer():
-            return Response(
-                {"status": "error", "message": "Customer ID must be an integer (e.g., 12345)"},
-                status=status.HTTP_400_BAD_REQUEST
-            )        
-        # Nếu OK, chuẩn hóa về dạng số nguyên string (bỏ .0)
-        customer_id = str(int(float_val))
-        customer_id = f"{customer_id}.0"
+        # --- Code xử lý logic transaction ở đây ---
+        print(f"Đang xử lý giao dịch cho khách hàng: {customer_id}")
+        
+        engine = RFMEngine()
+        result = engine.predict_customer(customer_id)
+
+        if result.get('status') == 'success':
+            print(f"new_transaction success => Start send backdata: {len(result['data'])}")
+            threading.Thread(target=send_webhook, args=(result['data'],)).start()
+        
+        # print(f"new_transaction -> Result: {result}")
+
+        return JsonResponse(result)
     except Exception as e:
         print(f'Exception: {e}')
         # Nếu không thể convert sang float -> chắc chắn chứa ký tự chữ
@@ -61,19 +63,7 @@ def new_transaction(request):
                 status=status.HTTP_400_BAD_REQUEST
             )        
 
-    # --- Code xử lý logic transaction ở đây ---
-    print(f"Đang xử lý giao dịch cho khách hàng: {customer_id}")
     
-    engine = RFMEngine()
-    result = engine.predict_customer(customer_id)
-
-    if result.get('status') == 'success':
-        # print(f"new_transaction success => Start send backdata: {result['data']}")
-        threading.Thread(target=send_webhook, args=(result['data'],)).start()
-    
-    # print(f"new_transaction -> Result: {result}")
-
-    return JsonResponse(result)
 
 
 # API 2: retrain_all
@@ -87,7 +77,7 @@ def retrain_all(request):
     result = engine.train()
     
     if result.get('status') == 'success':
-        # print(f"retrain_all success => Start send backdata: {result['data']}")
+        print(f"retrain_all success => Start send backdata: {len(result['data'])}")
         threading.Thread(target=send_webhook, args=(result['data'],)).start()
 
     return JsonResponse(result)
@@ -101,6 +91,6 @@ def relabel_all(request):
     engine = RFMEngine()
     result = engine.predict()
     if result.get('status') == 'success':
-        # print(f"relabel_all success => Start send backdata: {result['data']}")
+        print(f"relabel_all success => Start send backdata: {len(result['data'])}")
         threading.Thread(target=send_webhook, args=(result['data'],)).start()
     return JsonResponse(result)
