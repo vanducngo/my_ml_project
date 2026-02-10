@@ -44,21 +44,26 @@ def new_transaction(request):
         )
 
     try:
+        print("1")
         customer_id = customer_id.strip()
+        print("2")
         # --- Code xử lý logic transaction ở đây ---
         print(f"Đang xử lý giao dịch cho khách hàng: {customer_id}")
         
         engine = RFMEngine()
+        print("3")
         result = engine.predict_customer(customer_id)
+        print("4")
 
         if result.get('status') == 'success':
             print(f"new_transaction success => Start send backdata: {len(result['data'])}")
             threading.Thread(target=send_webhook, args=(result['data'],)).start()
         
         # print(f"new_transaction -> Result: {result}")
-
+        print("5")
         return JsonResponse(result)
     except Exception as e:
+        print("6")
         print(f'Exception: {e}')
         return Response(
                 {"status": "error", "message": f"Error - '{e}'"},
