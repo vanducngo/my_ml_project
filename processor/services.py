@@ -279,7 +279,7 @@ class RFMEngine:
 
         # Evaluate
         y_pred = model.predict(X_test)
-        print(classification_report(y_test, y_pred))
+        # print(classification_report(y_test, y_pred))
 
         # ==========================================================
         # 9. Lưu Artifacts & Config
@@ -351,7 +351,7 @@ class RFMEngine:
         try:
             response = requests.get(api_url, timeout=10)
             print(f"API: {api_url}")
-            print(f"Response: {response}")
+            # print(f"Response: {response}")
             if response.status_code != 200:
                  return {"status": "error", "message": f"API Error: {response.status_code}"}
             
