@@ -151,7 +151,7 @@ class RFMEngine:
             })
         return results
 
-    def train(self, csv_filename='online_retail_II.csv', use_api=False):
+    def train(self):
         """
         Quy trình huấn luyện Model từ đầu.
         Có thể chọn nguồn dữ liệu từ CSV hoặc Database.
@@ -159,17 +159,11 @@ class RFMEngine:
         print("--- Bắt đầu quy trình Training ---")
         
         # 1. Load Dữ Liệu (DB hoặc CSV)
-        if use_api:
-            try:
-                print("LoadData Prom API")
-                df = self._load_data_from_api()
-            except Exception as e:
-                return {"status": "error", "message": str(e)}
-        else:
-            csv_path = os.path.join(self.DATA_DIR, csv_filename)
-            if not os.path.exists(csv_path):
-                return {"error": f"File {csv_filename} không tồn tại."}
-            df = pd.read_csv(csv_path)
+        try:
+            print("LoadData Prom API")
+            df = self._load_data_from_api()
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
         # 2. Preprocessing & RFM
         df = self._preprocessing(df)
@@ -442,7 +436,7 @@ class RFMEngine:
             "data": [result_item]
         }
     
-    def predict(self, csv_filename='online_retail_II.csv', use_db=False):
+    def predict(self):
         """
         Quy trình dự đoán phân khúc cho TOÀN BỘ khách hàng (Batch Prediction).
         Input: File CSV giao dịch hoặc lấy từ DB.
