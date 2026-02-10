@@ -52,6 +52,7 @@ def new_transaction(request):
             )        
         # Nếu OK, chuẩn hóa về dạng số nguyên string (bỏ .0)
         customer_id = str(int(float_val))
+        customer_id = f"{customer_id}.0"
     except Exception as e:
         print(f'Exception: {e}')
         # Nếu không thể convert sang float -> chắc chắn chứa ký tự chữ
