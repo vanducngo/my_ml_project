@@ -427,20 +427,24 @@ class RFMEngine:
         segment_name = label_map.get(pred_cluster_id, "Không xác định")
 
         # 10. Trả về kết quả (đã ép kiểu native python để tránh lỗi JSON)
-        result_item = {
-            "customer_id": str(customer_id),
-            "label": segment_name, # Biến segment_name lấy từ logic predict cũ
-            "recency_score": int(recency),
-            "frequency_score": int(frequency),
-            "monetary_score": float(round(monetary, 2))
-        }
+        # Chuyển đổi các giá trị thô
+        order_count = int(frequency)
+        total_invoiced = float(round(monetary, 2))
+        
+        # Tính AOV (Tránh chia cho 0)
+        aov = total_invoiced / order_count if order_count > 0 else 0.0
+
 
         result_item = {
             "customer_id": str(customer_id),
             "label": segment_name,
             "recency_score": int(recency),
             "frequency_score": int(frequency),
-            "monetary_score": float(round(monetary, 2))
+            "monetary_score": float(round(monetary, 2)),
+
+            "order_count": order_count,
+            "total_invoiced_v2": round(total_invoiced, 2),
+            "aov": round(aov, 2)
         }
 
         return {
