@@ -152,50 +152,50 @@ class RFMEngine:
         print(f"Số điểm ngoại lai đã bị loại bỏ: {initial_count - df_clean.shape[0]}")
         return df_clean
     
-    def _format_for_data_webhook(self, df_result):
-        """
-        Helper chuyển DataFrame thành List Dict để trả về API/Webhook.
-        Xử lý an toàn cho JSON (NaN, Infinity).
-        """
-        print("Ben Trong ham _format_for_data_webhook")
-        # Thay thế NaN, Inf trong DataFrame bằng None (null trong JSON)
-        df_result = df_result.replace([np.inf, -np.inf, np.nan], None)
+    # def _format_for_data_webhook(self, df_result):
+    #     """
+    #     Helper chuyển DataFrame thành List Dict để trả về API/Webhook.
+    #     Xử lý an toàn cho JSON (NaN, Infinity).
+    #     """
+    #     print("Ben Trong ham _format_for_data_webhook")
+    #     # Thay thế NaN, Inf trong DataFrame bằng None (null trong JSON)
+    #     df_result = df_result.replace([np.inf, -np.inf, np.nan], None)
         
-        results = []
-        for _, row in df_result.iterrows():
-            # Xử lý Customer ID
-            cust_id_raw = str(row['Customer ID'])
-            if cust_id_raw.replace('.', '', 1).isdigit():
-                cust_id_str = cust_id_raw
-            else:
-                cust_id_str = cust_id_raw
+    #     results = []
+    #     for _, row in df_result.iterrows():
+    #         # Xử lý Customer ID
+    #         cust_id_raw = str(row['Customer ID'])
+    #         if cust_id_raw.replace('.', '', 1).isdigit():
+    #             cust_id_str = cust_id_raw
+    #         else:
+    #             cust_id_str = cust_id_raw
 
-            # Xử lý Label (nếu None thì gán mặc định)
-            label = row['Segment']
-            if label is None:
-                label = "Unknown"
+    #         # Xử lý Label (nếu None thì gán mặc định)
+    #         label = row['Segment']
+    #         if label is None:
+    #             label = "Unknown"
 
-            # Chuyển đổi các giá trị thô
-            order_count = int(row['Frequency']) if row['Frequency'] is not None else 0
-            total_invoiced = float(row['Monetary']) if row['Monetary'] is not None else 0.0
+    #         # Chuyển đổi các giá trị thô
+    #         order_count = int(row['Frequency']) if row['Frequency'] is not None else 0
+    #         total_invoiced = float(row['Monetary']) if row['Monetary'] is not None else 0.0
             
-            # Tính AOV (Tránh chia cho 0)
-            aov = total_invoiced / order_count if order_count > 0 else 0.0
+    #         # Tính AOV (Tránh chia cho 0)
+    #         aov = total_invoiced / order_count if order_count > 0 else 0.0
 
-            results.append({
-                "customer_id": cust_id_str,
-                "label": label,
-                "recency_score": int(row['Recency']) if row['Recency'] is not None else 0,
-                "frequency_score": int(row['Frequency']) if row['Frequency'] is not None else 0,
-                "monetary_score": float(round(row['Monetary'], 2)) if row['Monetary'] is not None else 0.0,
+    #         results.append({
+    #             "customer_id": cust_id_str,
+    #             "label": label,
+    #             "recency_score": int(row['Recency']) if row['Recency'] is not None else 0,
+    #             "frequency_score": int(row['Frequency']) if row['Frequency'] is not None else 0,
+    #             "monetary_score": float(round(row['Monetary'], 2)) if row['Monetary'] is not None else 0.0,
 
-                # --- 3 TRƯỜNG MỚI THÊM ---
-                "order_count": order_count,
-                "total_invoiced_v2": round(total_invoiced, 2),
-                "aov": round(aov, 2)
-            })
+    #             # --- 3 TRƯỜNG MỚI THÊM ---
+    #             "order_count": order_count,
+    #             "total_invoiced_v2": round(total_invoiced, 2),
+    #             "aov": round(aov, 2)
+    #         })
 
-        return results
+    #     return results
 
     def train(self):
         """
@@ -543,11 +543,22 @@ class RFMEngine:
         """
         results = []
         for _, row in df_result.iterrows():
+            # Chuyển đổi các giá trị thô
+            order_count = int(row['Frequency']) if row['Frequency'] is not None else 0
+            total_invoiced = float(row['Monetary']) if row['Monetary'] is not None else 0.0
+            
+            # Tính AOV (Tránh chia cho 0)
+            aov = total_invoiced / order_count if order_count > 0 else 0.0
             results.append({
                 "customer_id": row['Customer ID'],
                 "label": row['Segment'],
                 "recency_score": int(row['Recency']),       # Giá trị ngày thực tế
                 "frequency_score": int(row['Frequency']),   # Số lần mua thực tế
-                "monetary_score": float(round(row['Monetary'], 2)) # Số tiền thực tế
+                "monetary_score": float(round(row['Monetary'], 2)), # Số tiền thực tế
+
+
+                "order_count": order_count,
+                "total_invoiced_v2": round(total_invoiced, 2),
+                "aov": round(aov, 2)
             })
         return results
