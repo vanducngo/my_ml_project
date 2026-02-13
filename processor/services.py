@@ -101,24 +101,37 @@ class RFMEngine:
         return targetDf
 
     def _calculate_rfm(self, targetDf):
-        """Hàm tính toán RFM từ dữ liệu giao dịch thô"""
+        """Hàm tính toán RFM và các trường mở rộng (order_count, total_invoiced_v2, aov)"""
+        
+        # 1. Tính Total Price cho từng dòng giao dịch
+        targetDf['TotalPrice'] = targetDf['Quantity'] * targetDf['Price']
+        
+        # 2. Xác định ngày mốc (Ngày gần nhất trong data + 1)
         latest_date = targetDf['InvoiceDate'].max() + datetime.timedelta(days=1)
 
-        recency_df = targetDf.groupby('Customer ID').agg({
-            'InvoiceDate': lambda x: (latest_date - x.max()).days
-        }).rename(columns={'InvoiceDate': 'Recency'})
+        # 3. Thực hiện aggregate toàn bộ các chỉ số trong 1 lần groupby để tối ưu hiệu năng
+        rfm_df = targetDf.groupby('Customer ID').agg({
+            'InvoiceDate': lambda x: (latest_date - x.max()).days, # Tính Recency
+            'Invoice': 'nunique',                                  # Tính Frequency / order_count
+            'TotalPrice': 'sum'                                    # Tính Monetary / total_invoiced_v2
+        })
 
-        frequency_df = targetDf.groupby('Customer ID').agg({
-            'Invoice': 'nunique'
-        }).rename(columns={'Invoice': 'Frequency'})
+        # 4. Đặt lại tên cột chuẩn cho RFM
+        rfm_df.columns = ['Recency', 'Frequency', 'Monetary']
 
-        targetDf['TotalPrice'] = targetDf['Quantity'] * targetDf['Price']
-        monetary_df = targetDf.groupby('Customer ID').agg({
-            'TotalPrice': 'sum'
-        }).rename(columns={'TotalPrice': 'Monetary'})
+        # 5. Bổ sung các trường mới theo yêu cầu của em
+        # order_count chính là Frequency (số đơn duy nhất)
+        rfm_df['order_count'] = rfm_df['Frequency']
+        
+        # total_invoiced_v2 chính là Monetary (tổng doanh thu)
+        rfm_df['total_invoiced_v2'] = rfm_df['Monetary']
+        
+        # aov = tổng tiền / số đơn (Average Order Value)
+        # Sử dụng Frequency để chia (đảm bảo Frequency > 0 do đã lọc ở preprocessing)
+        rfm_df['aov'] = rfm_df['Monetary'] / rfm_df['Frequency']
 
-        rfm_df = recency_df.join(frequency_df).join(monetary_df)
-        rfm_df.reset_index(inplace=True)
+        # 6. Reset index để 'Customer ID' trở lại thành một cột thông thường
+        rfm_df = rfm_df.reset_index()
         
         return rfm_df
     
@@ -162,12 +175,24 @@ class RFMEngine:
             if label is None:
                 label = "Unknown"
 
+            # Chuyển đổi các giá trị thô
+            order_count = int(row['Frequency']) if row['Frequency'] is not None else 0
+            total_invoiced = float(row['Monetary']) if row['Monetary'] is not None else 0.0
+            
+            # Tính AOV (Tránh chia cho 0)
+            aov = total_invoiced / order_count if order_count > 0 else 0.0
+
             results.append({
                 "customer_id": cust_id_str,
                 "label": label,
                 "recency_score": int(row['Recency']) if row['Recency'] is not None else 0,
                 "frequency_score": int(row['Frequency']) if row['Frequency'] is not None else 0,
-                "monetary_score": float(round(row['Monetary'], 2)) if row['Monetary'] is not None else 0.0
+                "monetary_score": float(round(row['Monetary'], 2)) if row['Monetary'] is not None else 0.0,
+
+                # --- 3 TRƯỜNG MỚI THÊM ---
+                "order_count": order_count,
+                "total_invoiced_v2": round(total_invoiced, 2),
+                "aov": round(aov, 2)
             })
 
         return results
