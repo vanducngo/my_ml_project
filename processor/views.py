@@ -1,4 +1,4 @@
-from processor.services import RFMEngine
+from processor.services_with_validation import RFMEngine
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
