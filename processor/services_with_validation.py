@@ -415,93 +415,210 @@ class RFMEngine:
             "data": webhook_data
         }
 
+    # def predict_customer(self, customer_id):
+    #     """
+    #     API: label_customer - Dự đoán 1 KH và đối chiếu với dữ liệu gốc (Ground Truth).
+    #     """
+    #     print(f"\n--- DỰ ĐOÁN & VALIDATE KHÁCH HÀNG: {customer_id} ---")
+
+    #     if not os.path.exists(self.files['model']):
+    #         return {"status": "error", "message": "Model not found."}
+
+    #     # 1. Tải dữ liệu KH từ API
+    #     raw_df = self._load_data_from_api(customer_id=customer_id)
+    #     if raw_df.empty:
+    #         return {"status": "error", "message": f"No transactions found for ID {customer_id}."}
+
+    #     # 2. Preprocessing & RFM (Tính toán thực tế hiện tại)
+    #     df_clean = self._preprocessing(raw_df)
+    #     rfm_single = self._calculate_rfm(df_clean)
+        
+    #     # 3. Load Model & Config
+    #     model = joblib.load(self.files['model'])
+    #     scaler = joblib.load(self.files['scaler'])
+    #     with open(self.files['config'], 'r') as f:
+    #         cfg = json.load(f)
+    #     label_map = {int(k): v for k, v in cfg['l_map'].items()}
+
+    #     # 4. Pipeline: Transform -> Scale -> Predict
+    #     row = rfm_single.iloc[0]
+    #     r = 1 if row['Recency'] <= 0 else row['Recency']
+    #     f = 1 if row['Frequency'] <= 0 else row['Frequency']
+    #     m = row['Monetary']
+
+    #     try:
+    #         r_t = stats.boxcox([r], lmbda=cfg['l_r'])[0]
+    #         f_t = stats.boxcox([f], lmbda=cfg['l_f'])[0]
+    #         m_t = np.cbrt([m])[0]
+
+    #         X_single = scaler.transform(np.array([[r_t, f_t, m_t]]))
+    #         pred_cluster_id = int(model.predict(X_single)[0])
+    #         current_segment = label_map.get(pred_cluster_id, "Unknown")
+            
+    #         rfm_single['Segment'] = current_segment
+    #     except Exception as e:
+    #         return {"status": "error", "message": f"Math transformation error: {e}"}
+
+    #     # ==============================================================================
+    #     # 5. LOGIC VALIDATION (Đối chiếu Ground Truth)
+    #     # ==============================================================================
+    #     validation_result = {
+    #         "is_matched": None,
+    #         "original_label": "Not found in training data",
+    #         "message": "Không có dữ liệu gốc để đối chiếu."
+    #     }
+
+    #     training_data_path = os.path.join(self.ARTIFACT_DIR, 'training_labeled_data.csv')
+    #     if os.path.exists(training_data_path):
+    #         try:
+    #             # Load tập train cũ
+    #             gt_df = pd.read_csv(training_data_path)
+    #             # Chuẩn hóa ID để so khớp chính xác
+    #             gt_df['Customer ID'] = gt_df['Customer ID'].astype(str).apply(lambda x: x.split('.')[0])
+    #             target_id = str(customer_id).split('.')[0]
+
+    #             # Tìm khách hàng trong tập train
+    #             original_row = gt_df[gt_df['Customer ID'] == target_id]
+
+    #             if not original_row.empty:
+    #                 original_label = original_row.iloc[0]['Segment']
+    #                 is_matched = (current_segment == original_label)
+                    
+    #                 validation_result = {
+    #                     "is_matched": bool(is_matched),
+    #                     "original_label": str(original_label),
+    #                     "message": "Khớp hoàn toàn với dữ liệu gốc." if is_matched else "Kết quả dự đoán khác với dữ liệu gốc (có thể do data thay đổi)."
+    #                 }
+    #                 print(f"   > Validation: {'PASS' if is_matched else 'MISMATCH'} (Old: {original_label}, New: {current_segment})")
+    #         except Exception as e:
+    #             print(f"   > Lỗi khi validate: {e}")
+    #             validation_result["message"] = f"Lỗi đối chiếu: {str(e)}"
+
+    #     print(f"Validation data Predict 1 customer: {validation_result}")
+    #     # 6. Format kết quả trả về
+    #     data_output = self._format_for_data_webhook(rfm_single)
+        
+    #     return {
+    #         "status": "success",
+    #         "customer_id": target_id,
+    #         "prediction_result": data_output[0],
+    #     }
+
     def predict_customer(self, customer_id):
         """
-        API: label_customer - Dự đoán 1 KH và đối chiếu với dữ liệu gốc (Ground Truth).
+        Dự đoán phân khúc cho MỘT khách hàng cụ thể.
+        Trả về cả Cluster ID (Số) và Segment Name (Chữ).
         """
-        print(f"\n--- DỰ ĐOÁN & VALIDATE KHÁCH HÀNG: {customer_id} ---")
+        print("1")
+        print(f"--- Bắt đầu dự đoán cho Customer ID: {customer_id} ---")
+        print("2")
 
+        # 1. Kiểm tra Model & Config
         if not os.path.exists(self.files['model']):
-            return {"status": "error", "message": "Model not found."}
+            return {"status": "error", "message": "Model chưa được train. Hãy chạy /train/ trước."}
 
-        # 1. Tải dữ liệu KH từ API
-        raw_df = self._load_data_from_api(customer_id=customer_id)
-        if raw_df.empty:
-            return {"status": "error", "message": f"No transactions found for ID {customer_id}."}
+        print("3")
+        api_url = f"{self.DATA_API_URL}?customer_id={customer_id}"
+        print("4")
+        try:
+            response = requests.get(api_url, timeout=10)
+            print(f"API: {api_url}")
+            # print(f"Response: {response}")
+            if response.status_code != 200:
+                 return {"status": "error", "message": f"API Error: {response.status_code}"}
+            
+            data = response.json()
+            records = data.get('records', [])
+            
+            if not records:
+                return {"status": "error", "message": f"Không tìm thấy giao dịch nào của KH {customer_id}"}
+                
+            df = pd.DataFrame(records)
+            
+        except Exception as e:
+            return {"status": "error", "message": f"Lỗi gọi API: {str(e)}"}
 
-        # 2. Preprocessing & RFM (Tính toán thực tế hiện tại)
-        df_clean = self._preprocessing(raw_df)
-        rfm_single = self._calculate_rfm(df_clean)
-        
-        # 3. Load Model & Config
+        # 3. Preprocessing nhanh
+        df['InvoiceDate'] = pd.to_datetime(df['InvoiceDate'])
+        df = df[df['Quantity'] > 0]
+        df = df[df['Price'] > 0]
+        df = df.dropna(subset=['Customer ID'])
+
+        # 4. Xác định ngày mốc toàn cục
+        global_latest_date = datetime.datetime.now() + datetime.timedelta(days=1)
+
+        # 5. Lọc dữ liệu Customer        
+        customer_df = df[df['Customer ID'] == customer_id]
+
+        if customer_df.empty:
+            return {"status": "error", "message": f"Không tìm thấy Customer ID {customer_id}"}
+
+        # 6. Tính RFM
+        recency = (global_latest_date - customer_df['InvoiceDate'].max()).days
+        frequency = customer_df['Invoice'].nunique()
+        monetary = (customer_df['Quantity'] * customer_df['Price']).sum()
+
+        # Xử lý an toàn cho Box-Cox
+        recency = 1 if recency <= 0 else recency
+        frequency = 1 if frequency <= 0 else frequency
+        monetary = 0.001 if monetary <= 0 else monetary
+
+        # 7. Load Model & Config
         model = joblib.load(self.files['model'])
         scaler = joblib.load(self.files['scaler'])
         with open(self.files['config'], 'r') as f:
-            cfg = json.load(f)
-        label_map = {int(k): v for k, v in cfg['l_map'].items()}
+            config = json.load(f)
 
-        # 4. Pipeline: Transform -> Scale -> Predict
-        row = rfm_single.iloc[0]
-        r = 1 if row['Recency'] <= 0 else row['Recency']
-        f = 1 if row['Frequency'] <= 0 else row['Frequency']
-        m = row['Monetary']
+        # Load Mapping từ config (Convert key từ string sang int)
+        label_map = {int(k): v for k, v in config['label_map'].items()}
 
+        # 8. Transform & Scale
         try:
-            r_t = stats.boxcox([r], lmbda=cfg['l_r'])[0]
-            f_t = stats.boxcox([f], lmbda=cfg['l_f'])[0]
-            m_t = np.cbrt([m])[0]
-
-            X_single = scaler.transform(np.array([[r_t, f_t, m_t]]))
-            pred_cluster_id = int(model.predict(X_single)[0])
-            current_segment = label_map.get(pred_cluster_id, "Unknown")
+            r_trans = stats.boxcox([recency], lmbda=config['lambda_recency'])
+            f_trans = stats.boxcox([frequency], lmbda=config['lambda_frequency'])
+            m_trans = np.cbrt([monetary])
             
-            rfm_single['Segment'] = current_segment
+            # Tạo array 2D cho scaler
+            rfm_processed = np.array([[r_trans[0], f_trans[0], m_trans[0]]])
+            X_new = scaler.transform(rfm_processed)
+            
         except Exception as e:
-            return {"status": "error", "message": f"Math transformation error: {e}"}
+            return {"status": "error", "message": f"Lỗi tính toán: {str(e)}"}
 
-        # ==============================================================================
-        # 5. LOGIC VALIDATION (Đối chiếu Ground Truth)
-        # ==============================================================================
-        validation_result = {
-            "is_matched": None,
-            "original_label": "Not found in training data",
-            "message": "Không có dữ liệu gốc để đối chiếu."
+        # 9. Predict & Map Result
+        pred_cluster_id = int(model.predict(X_new)[0]) # Ra số (ví dụ: 4)
+        segment_name = label_map.get(pred_cluster_id, "Không xác định")
+
+        # 10. Trả về kết quả (đã ép kiểu native python để tránh lỗi JSON)
+        # Chuyển đổi các giá trị thô
+        order_count = int(frequency)
+        total_invoiced = float(round(monetary, 2))
+        
+        # Tính AOV (Tránh chia cho 0)
+        aov = total_invoiced / order_count if order_count > 0 else 0.0
+
+
+        result_item = {
+            "customer_id": str(customer_id),
+            "label": segment_name,
+            "recency_score": int(recency),
+            "frequency_score": int(frequency),
+            "monetary_score": float(round(monetary, 2)),
+
+            "order_count": order_count,
+            "total_invoiced_v2": round(total_invoiced, 2),
+            "aov": round(aov, 2)
         }
 
-        training_data_path = os.path.join(self.ARTIFACT_DIR, 'training_labeled_data.csv')
-        if os.path.exists(training_data_path):
-            try:
-                # Load tập train cũ
-                gt_df = pd.read_csv(training_data_path)
-                # Chuẩn hóa ID để so khớp chính xác
-                gt_df['Customer ID'] = gt_df['Customer ID'].astype(str).apply(lambda x: x.split('.')[0])
-                target_id = str(customer_id).split('.')[0]
+        webhook_data = {
+            "is_retrain": False,
+            "retrain_data": {},
+            "labels": [result_item]
+        }
 
-                # Tìm khách hàng trong tập train
-                original_row = gt_df[gt_df['Customer ID'] == target_id]
-
-                if not original_row.empty:
-                    original_label = original_row.iloc[0]['Segment']
-                    is_matched = (current_segment == original_label)
-                    
-                    validation_result = {
-                        "is_matched": bool(is_matched),
-                        "original_label": str(original_label),
-                        "message": "Khớp hoàn toàn với dữ liệu gốc." if is_matched else "Kết quả dự đoán khác với dữ liệu gốc (có thể do data thay đổi)."
-                    }
-                    print(f"   > Validation: {'PASS' if is_matched else 'MISMATCH'} (Old: {original_label}, New: {current_segment})")
-            except Exception as e:
-                print(f"   > Lỗi khi validate: {e}")
-                validation_result["message"] = f"Lỗi đối chiếu: {str(e)}"
-
-        print(f"Validation data Predict 1 customer: {validation_result}")
-        # 6. Format kết quả trả về
-        data_output = self._format_for_data_webhook(rfm_single)
-        
         return {
             "status": "success",
-            "customer_id": target_id,
-            "prediction_result": data_output[0],
+            "data": webhook_data
         }
 
     def _format_for_data_webhook(self, df_result):

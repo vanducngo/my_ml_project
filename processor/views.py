@@ -35,8 +35,10 @@ def send_webhook(data):
 def new_transaction(request):
     cache.clear()
     # Lấy customer_id từ dữ liệu gửi lên (Body JSON)
-    customer_id = request.data.get('customer_id')
 
+    print('Step 1')
+    customer_id = request.data.get('customer_id')
+    print('Step 2')
     if not customer_id:
         return Response(
             {"error": "Thiếu tham số customer_id"}, 
@@ -58,6 +60,7 @@ def new_transaction(request):
         # print(f"new_transaction -> Result: {result}")
         return JsonResponse(result)
     except Exception as e:
+        print('Step -999')
         print(f'Exception: {e}')
         return Response(
                 {"status": "error", "message": f"Error - '{e}'"},
