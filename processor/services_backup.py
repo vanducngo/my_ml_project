@@ -462,7 +462,7 @@ class RFMEngine:
         # 5. Lọc dữ liệu của Customer ID được yêu cầu
         # Chuyển đổi Customer ID trong DataFrame và Input về cùng kiểu String để so sánh
         df['Customer ID'] = df['Customer ID'].astype(float).astype(int).astype(str)
-        str_customer_id = str(int(float(customer_id))) # Chuyển input '12345.0' hoặc 12345 thành '12345'
+        str_customer_id = customer_id
         
         customer_df = df[df['Customer ID'] == str_customer_id].copy()
 
