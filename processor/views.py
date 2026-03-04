@@ -69,12 +69,21 @@ def new_transaction(request):
 @api_view(['POST'])
 def retrain_all(request):
     cache.clear()
+    # Lấy customer_id từ dữ liệu gửi lên (Body JSON)
+    retrain_history_id = request.data.get('retrain_history_id')
+
+    if not retrain_history_id:
+        return Response(
+            {"error": "Thiếu tham số customer_id"}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
     print("Bắt đầu train lại toàn bộ hệ thống...")
     
     # --- Giả lập quá trình train ---
     # time.sleep(2) 
     engine = RFMEngine()
-    result = engine.train()
+    result = engine.train(retrain_history_id)
     
     if result.get('status') == 'success':
         print(f"retrain_all success => Start send backdata: {len(result['data'])}")

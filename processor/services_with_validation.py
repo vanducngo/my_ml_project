@@ -11,7 +11,7 @@ from sklearn.cluster import KMeans
 import xgboost as xgb
 from django.conf import settings
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, accuracy_score
+from sklearn.metrics import classification_report
 
 class RFMEngine:
     def __init__(self):
@@ -167,7 +167,7 @@ class RFMEngine:
         # 5. Chuyển thành list dict để trả về API (nếu cần hiển thị lên Dashboard)
         return stats_df.to_dict('records')
 
-    def train(self):
+    def train(self, retrain_history_id):
         """Quy trình huấn luyện và kiểm thử tại chỗ"""
         print("\n=== BẮT ĐẦU TRAINING ===")
         
@@ -263,7 +263,15 @@ class RFMEngine:
         # Evaluate Test Set
         print("\nReport trên tập Test (Hold-out 20%):")
         y_pred_test = model.predict(X_test)
+
+        report = classification_report(y_test, y_pred_test, output_dict=True)
         print(classification_report(y_test, y_pred_test))
+
+        retrain_data = {
+            "retrain_history_id": retrain_history_id,
+            "f1_score": report['macro avg']['f1-score'],
+            "accuracy_score": report['accuracy']
+        }
 
         # 8. Save Artifacts
         joblib.dump(model, self.files['model'])
@@ -281,10 +289,10 @@ class RFMEngine:
         # Gọi hàm predict nhưng truyền data rfm_clean vào.
         # Mục đích: Verify xem pipeline Predict có ra kết quả giống pipeline Train (KMeans) không.
         # rfm_clean lúc này chứa: R, F, M (raw), Cluster (Kmeans), Segment (Kmeans)
-        return self.predict(input_rfm_df=rfm_clean)
+        return self.predict(True, retrain_data)
 
 
-    def predict(self, input_rfm_df=None):
+    def predict(self, is_retrain = False, retrain_data = {}):
         """
         Batch Prediction & Validation với Training Data cũ.
         """
@@ -295,16 +303,13 @@ class RFMEngine:
             return {"status": "error", "message": "Model not found. Hãy chạy /train/ trước."}
 
         # 2. Load Dữ liệu hiện tại (Current Data)
-        if input_rfm_df is not None:
-            rfm_df = input_rfm_df.copy()
-        else:
-            try:
-                # Load từ API (Dữ liệu mới nhất)
-                raw_df = self._load_data_from_api()
-                df = self._preprocessing(raw_df)
-                rfm_df = self._calculate_rfm(df)
-            except Exception as e:
-                return {"status": "error", "message": str(e)}
+        try:
+            # Load từ API (Dữ liệu mới nhất)
+            raw_df = self._load_data_from_api()
+            df = self._preprocessing(raw_df)
+            rfm_df = self._calculate_rfm(df)
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
         if rfm_df.empty:
             return {"status": "error", "message": "No data to predict"}
@@ -397,7 +402,11 @@ class RFMEngine:
         rfm_df['Segment'] = rfm_df['Cluster_Pred'].map(label_map)
 
         # 8. Trả kết quả
-        webhook_data = self._format_for_data_webhook(rfm_df)
+        webhook_data = {
+            "is_retrain": is_retrain,
+            "retrain_data": retrain_data,
+            "labels": self._format_for_data_webhook(rfm_df)
+        }
         
         return {
             "status": "success",
@@ -407,19 +416,95 @@ class RFMEngine:
         }
 
     def predict_customer(self, customer_id):
-        """Dự đoán cho 1 khách hàng (Real-time)"""
-        # (Giữ nguyên logic cũ, chỉ cập nhật phần transform cho an toàn)
-        # ... Load Model ...
-        # ... Load Data from API ...
+        """
+        API: label_customer - Dự đoán 1 KH và đối chiếu với dữ liệu gốc (Ground Truth).
+        """
+        print(f"\n--- DỰ ĐOÁN & VALIDATE KHÁCH HÀNG: {customer_id} ---")
+
+        if not os.path.exists(self.files['model']):
+            return {"status": "error", "message": "Model not found."}
+
+        # 1. Tải dữ liệu KH từ API
+        raw_df = self._load_data_from_api(customer_id=customer_id)
+        if raw_df.empty:
+            return {"status": "error", "message": f"No transactions found for ID {customer_id}."}
+
+        # 2. Preprocessing & RFM (Tính toán thực tế hiện tại)
+        df_clean = self._preprocessing(raw_df)
+        rfm_single = self._calculate_rfm(df_clean)
         
-        # Logic Transform cần sửa lại như sau để đảm bảo nhất quán:
-        # rfm_val = self._safe_transform_boxcox_input(pd.Series([raw_val]))
-        # trans_val = stats.boxcox(rfm_val, lmbda=config['lambda...'])
-        pass 
-        # (Em có thể tự cập nhật hàm này dựa trên logic của hàm predict ở trên)
+        # 3. Load Model & Config
+        model = joblib.load(self.files['model'])
+        scaler = joblib.load(self.files['scaler'])
+        with open(self.files['config'], 'r') as f:
+            cfg = json.load(f)
+        label_map = {int(k): v for k, v in cfg['l_map'].items()}
+
+        # 4. Pipeline: Transform -> Scale -> Predict
+        row = rfm_single.iloc[0]
+        r = 1 if row['Recency'] <= 0 else row['Recency']
+        f = 1 if row['Frequency'] <= 0 else row['Frequency']
+        m = row['Monetary']
+
+        try:
+            r_t = stats.boxcox([r], lmbda=cfg['l_r'])[0]
+            f_t = stats.boxcox([f], lmbda=cfg['l_f'])[0]
+            m_t = np.cbrt([m])[0]
+
+            X_single = scaler.transform(np.array([[r_t, f_t, m_t]]))
+            pred_cluster_id = int(model.predict(X_single)[0])
+            current_segment = label_map.get(pred_cluster_id, "Unknown")
+            
+            rfm_single['Segment'] = current_segment
+        except Exception as e:
+            return {"status": "error", "message": f"Math transformation error: {e}"}
+
+        # ==============================================================================
+        # 5. LOGIC VALIDATION (Đối chiếu Ground Truth)
+        # ==============================================================================
+        validation_result = {
+            "is_matched": None,
+            "original_label": "Not found in training data",
+            "message": "Không có dữ liệu gốc để đối chiếu."
+        }
+
+        training_data_path = os.path.join(self.ARTIFACT_DIR, 'training_labeled_data.csv')
+        if os.path.exists(training_data_path):
+            try:
+                # Load tập train cũ
+                gt_df = pd.read_csv(training_data_path)
+                # Chuẩn hóa ID để so khớp chính xác
+                gt_df['Customer ID'] = gt_df['Customer ID'].astype(str).apply(lambda x: x.split('.')[0])
+                target_id = str(customer_id).split('.')[0]
+
+                # Tìm khách hàng trong tập train
+                original_row = gt_df[gt_df['Customer ID'] == target_id]
+
+                if not original_row.empty:
+                    original_label = original_row.iloc[0]['Segment']
+                    is_matched = (current_segment == original_label)
+                    
+                    validation_result = {
+                        "is_matched": bool(is_matched),
+                        "original_label": str(original_label),
+                        "message": "Khớp hoàn toàn với dữ liệu gốc." if is_matched else "Kết quả dự đoán khác với dữ liệu gốc (có thể do data thay đổi)."
+                    }
+                    print(f"   > Validation: {'PASS' if is_matched else 'MISMATCH'} (Old: {original_label}, New: {current_segment})")
+            except Exception as e:
+                print(f"   > Lỗi khi validate: {e}")
+                validation_result["message"] = f"Lỗi đối chiếu: {str(e)}"
+
+        print(f"Validation data Predict 1 customer: {validation_result}")
+        # 6. Format kết quả trả về
+        data_output = self._format_for_data_webhook(rfm_single)
+        
+        return {
+            "status": "success",
+            "customer_id": target_id,
+            "prediction_result": data_output[0],
+        }
 
     def _format_for_data_webhook(self, df_result):
-        # (Giữ nguyên như code cũ của em)
         results = []
         for _, row in df_result.iterrows():
             order_count = int(row['Frequency']) if row['Frequency'] is not None else 0
