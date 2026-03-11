@@ -218,27 +218,72 @@ class RFMEngine:
         available_clusters = list(summary.index)
         label_map = {}
 
-        # Logic gán nhãn (Giữ nguyên như cũ)
-        vip_id = summary.loc[available_clusters]['Monetary'].idxmax()
-        label_map[int(vip_id)] = 'VIP'
-        available_clusters.remove(vip_id)
+        # # Rule 1: Tiền nhiều nhất -> VIP
+        # # Logic: Cụm có Monetary Cao Nhất
+        # vip_id = summary.loc[available_clusters]['Monetary'].idxmax()
+        # label_map[int(vip_id)] = 'VIP'
+        # available_clusters.remove(vip_id)
 
+        # # Rule 2: Recency cao nhất (lâu không mua) -> Rời bỏ
+        # # Logic: Cụm có Recency Cao Nhất (Lâu chưa mua)
+        # lost_id = summary.loc[available_clusters]['Recency'].idxmax()
+        # label_map[int(lost_id)] = 'Nguy cơ rời bỏ'
+        # available_clusters.remove(lost_id)
+
+        # # --- Rule 3: Khách hàng Mới ---
+        # # Logic: Min(Recency) + Min(Monetary)
+        # # Ta tính rank (thứ hạng) cho R và M trong các cụm còn lại.
+        # # Cụm nào có tổng hạng thấp nhất -> Mới
+        # current_subset = summary.loc[available_clusters]
+        # # Rank tăng dần (nhỏ nhất là 1)
+        # r_rank = current_subset['Recency'].rank(ascending=True)
+        # m_rank = current_subset['Monetary'].rank(ascending=True)
+        # # Tổng điểm (Score càng thấp càng khớp tiêu chí Mới: R thấp, M thấp)
+        # new_score = r_rank + m_rank
+        # new_id = new_score.idxmin()
+        # label_map[int(new_id)] = 'Mới'
+        # available_clusters.remove(new_id)
+
+        # # --- Rule 4: Khách hàng Trung thành ---
+        # # Logic: Min(Recency) trong các cụm còn lại
+        # # (Không phải Mới, không phải VIP, nhưng mua gần đây -> Trung thành)
+        # loyal_id = summary.loc[available_clusters]['Recency'].idxmin()
+        # label_map[int(loyal_id)] = 'Trung thành'
+        # available_clusters.remove(loyal_id)
+
+        # # Rule 5: Còn lại -> Tiềm năng
+        # potential_id = available_clusters[0]
+        # label_map[int(potential_id)] = 'Tiềm năng'
+
+        # --- ƯU TIÊN 1: Nguy cơ rời bỏ (Churn Risk) ---
+        # Loại bỏ cụm có Recency trung bình cao nhất ngay lập tức.
+        # Dù họ từng tiêu bao nhiêu tiền, nếu quá lâu không mua thì vẫn là nguy cơ rời bỏ.
         lost_id = summary.loc[available_clusters]['Recency'].idxmax()
         label_map[int(lost_id)] = 'Nguy cơ rời bỏ'
         available_clusters.remove(lost_id)
 
-        current_subset = summary.loc[available_clusters]
-        new_score = current_subset['Recency'].rank(ascending=True) + current_subset['Monetary'].rank(ascending=True)
-        new_id = new_score.idxmin()
-        label_map[int(new_id)] = 'Mới'
-        available_clusters.remove(new_id)
+        # --- ƯU TIÊN 2: Khách hàng VIP ---
+        # Trong các cụm còn lại (đã active hơn), cụm nào chi nhiều tiền nhất là VIP.
+        vip_id = summary.loc[available_clusters]['Monetary'].idxmax()
+        label_map[int(vip_id)] = 'VIP'
+        available_clusters.remove(vip_id)
 
-        loyal_id = summary.loc[available_clusters]['Recency'].idxmin()
+        # --- ƯU TIÊN 3: Khách hàng Trung thành ---
+        # Trong các cụm còn lại, cụm nào có tần suất mua hàng (Frequency) cao nhất.
+        loyal_id = summary.loc[available_clusters]['Frequency'].idxmax()
         label_map[int(loyal_id)] = 'Trung thành'
         available_clusters.remove(loyal_id)
 
-        potential_id = available_clusters[0]
+        # --- ƯU TIÊN 4: Khách hàng Tiềm năng ---
+        # Nhóm còn lại có mức chi tiêu tốt nhất.
+        potential_id = summary.loc[available_clusters]['Monetary'].idxmax()
         label_map[int(potential_id)] = 'Tiềm năng'
+        available_clusters.remove(potential_id)
+
+        # --- ƯU TIÊN 5: Khách hàng Mới ---
+        # Cụm cuối cùng thường là nhóm có Frequency và Monetary thấp nhất.
+        new_id = available_clusters[0]
+        label_map[int(new_id)] = 'Mới'
 
         # Map segment
         rfm_clean['Segment'] = rfm_clean['Cluster'].map(label_map)

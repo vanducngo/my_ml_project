@@ -102,8 +102,6 @@ class RFMEngine:
 
     def _calculate_rfm(self, targetDf):
         """Hàm tính toán RFM và các trường mở rộng (order_count, total_invoiced_v2, aov)"""
-        #TODO: TEST
-        targetDf = targetDf[targetDf['Customer ID'] == "ODOO_ID_5970"].copy()
         # 1. Tính Total Price cho từng dòng giao dịch
         targetDf['TotalPrice'] = targetDf['Quantity'] * targetDf['Price']
         
