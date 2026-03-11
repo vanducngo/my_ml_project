@@ -523,16 +523,20 @@ class RFMEngine:
         try:
             response = requests.get(api_url, timeout=10)
             print(f"API: {api_url}")
+            print(f"response: {response}")
             # print(f"Response: {response}")
             if response.status_code != 200:
+                 print(f"Call API ERROR: {response}")
                  return {"status": "error", "message": f"API Error: {response.status_code}"}
             
             data = response.json()
             records = data.get('records', [])
             
             if not records:
+                print(f"Error Không tim thấy giao dịch: {customer_id}")
                 return {"status": "error", "message": f"Không tìm thấy giao dịch nào của KH {customer_id}"}
-                
+            
+            print(f"Customer records: {records}")
             df = pd.DataFrame(records)
             
         except Exception as e:
@@ -557,6 +561,8 @@ class RFMEngine:
         recency = (global_latest_date - customer_df['InvoiceDate'].max()).days
         frequency = customer_df['Invoice'].nunique()
         monetary = (customer_df['Quantity'] * customer_df['Price']).sum()
+
+        print(f"Customer_RFM: {recency}-{frequency}-{monetary}")
 
         # Xử lý an toàn cho Box-Cox
         recency = 1 if recency <= 0 else recency
@@ -615,6 +621,8 @@ class RFMEngine:
             "retrain_data": {},
             "labels": [result_item]
         }
+
+        print(f"Customer_Prediction: {webhook_data}")
 
         return {
             "status": "success",
